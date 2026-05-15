@@ -284,6 +284,35 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddFunction(const TSharedRef<FJs
 		return FMCPToolResult::Error(ValidationError);
 	}
 
+	// Parse optional inputs array: [{"name": "Foo", "type": "float"}, ...]
+	TArray<FBlueprintFunctionParam> FunctionParams;
+	const TArray<TSharedPtr<FJsonValue>>* InputsArray;
+	if (Params->TryGetArrayField(TEXT("inputs"), InputsArray))
+	{
+		for (const TSharedPtr<FJsonValue>& InputVal : *InputsArray)
+		{
+			const TSharedPtr<FJsonObject>* InputObj;
+			if (!InputVal->TryGetObject(InputObj)) continue;
+
+			FString ParamName, ParamType;
+			if (!(*InputObj)->TryGetStringField(TEXT("name"), ParamName) ||
+				!(*InputObj)->TryGetStringField(TEXT("type"), ParamType))
+			{
+				continue;
+			}
+
+			FEdGraphPinType PinType;
+			FString TypeError;
+			if (FBlueprintUtils::ParsePinType(ParamType, PinType, TypeError))
+			{
+				FBlueprintFunctionParam Param;
+				Param.Name = ParamName;
+				Param.PinType = PinType;
+				FunctionParams.Add(Param);
+			}
+		}
+	}
+
 	// Load and validate Blueprint
 	FMCPBlueprintLoadContext Context;
 	if (auto LoadError = Context.LoadAndValidate(Params))
@@ -291,9 +320,9 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddFunction(const TSharedRef<FJs
 		return LoadError.GetValue();
 	}
 
-	// Add the function
+	// Add the function (with parameters if provided)
 	FString AddError;
-	if (!FBlueprintUtils::AddFunction(Context.Blueprint, FunctionName, AddError))
+	if (!FBlueprintUtils::AddFunction(Context.Blueprint, FunctionName, FunctionParams, AddError))
 	{
 		return FMCPToolResult::Error(AddError);
 	}
@@ -307,9 +336,10 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddFunction(const TSharedRef<FJs
 	// Build result
 	TSharedPtr<FJsonObject> ResultData = Context.BuildResultJson();
 	ResultData->SetStringField(TEXT("function_name"), FunctionName);
+	ResultData->SetNumberField(TEXT("param_count"), FunctionParams.Num());
 
 	return FMCPToolResult::Success(
-		FString::Printf(TEXT("Added function '%s' to Blueprint"), *FunctionName),
+		FString::Printf(TEXT("Added function '%s' (%d params) to Blueprint"), *FunctionName, FunctionParams.Num()),
 		ResultData
 	);
 }

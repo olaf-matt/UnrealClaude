@@ -275,6 +275,16 @@ UBlueprint* FBlueprintLoader::CreateBlueprint(
 		return nullptr;
 	}
 
+	// Guard against assert crash in Kismet2.cpp:435: FactoryCreateNew asserts that no Blueprint
+	// exists in the package yet, but CreatePackage returns an already-loaded package silently.
+	if (FindObject<UBlueprint>(Package, *BlueprintName))
+	{
+		OutError = FString::Printf(
+			TEXT("Blueprint '%s' already exists at '%s'. Delete it first or choose a different name."),
+			*BlueprintName, *FullPath);
+		return nullptr;
+	}
+
 	// Create Blueprint factory
 	UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
 	Factory->ParentClass = ParentClass;

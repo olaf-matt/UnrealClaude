@@ -6,6 +6,13 @@
 #include "Engine/Blueprint.h"
 #include "EdGraphSchema_K2.h"
 
+/** Input parameter for AddFunction — name + parsed pin type. */
+struct FBlueprintFunctionParam
+{
+	FString Name;
+	FEdGraphPinType PinType;
+};
+
 /**
  * Blueprint variable and function management
  *
@@ -57,15 +64,23 @@ public:
 	// ===== Function Management =====
 
 	/**
-	 * Add empty function to Blueprint
-	 * @param Blueprint - Blueprint to modify
-	 * @param FunctionName - Name of function (must be valid identifier)
-	 * @param OutError - Error message if failed
-	 * @return true if successful
+	 * Add function to Blueprint (no parameters).
 	 */
 	static bool AddFunction(
 		UBlueprint* Blueprint,
 		const FString& FunctionName,
+		FString& OutError
+	);
+
+	/**
+	 * Add function to Blueprint with typed input parameters.
+	 * For Blueprint Interfaces this also marks the entry node as editable so the
+	 * Details panel shows the signature editor (fixes the "Graph is not editable" bug).
+	 */
+	static bool AddFunction(
+		UBlueprint* Blueprint,
+		const FString& FunctionName,
+		const TArray<FBlueprintFunctionParam>& InParams,
 		FString& OutError
 	);
 

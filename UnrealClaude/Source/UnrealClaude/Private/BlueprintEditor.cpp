@@ -4,6 +4,7 @@
 #include "UnrealClaudeModule.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_FunctionEntry.h"
+#include "K2Node_EditablePinBase.h"
 #include "EdGraph/EdGraph.h"
 
 // ===== Variable Management =====
@@ -92,6 +93,15 @@ bool FBlueprintEditor::AddFunction(
 	const FString& FunctionName,
 	FString& OutError)
 {
+	return AddFunction(Blueprint, FunctionName, TArray<FBlueprintFunctionParam>(), OutError);
+}
+
+bool FBlueprintEditor::AddFunction(
+	UBlueprint* Blueprint,
+	const FString& FunctionName,
+	const TArray<FBlueprintFunctionParam>& InParams,
+	FString& OutError)
+{
 	if (!Blueprint)
 	{
 		OutError = TEXT("Blueprint is null");
@@ -127,33 +137,50 @@ bool FBlueprintEditor::AddFunction(
 		return false;
 	}
 
-	// Initialize and add to Blueprint
-	// nullptr cast for UE 5.7 template deduction
-	FBlueprintEditorUtils::AddFunctionGraph(Blueprint, NewGraph, false, static_cast<UFunction*>(nullptr));
+	// bIsUserCreated=true: user-authored function — allows rename, delete, and signature editing
+	FBlueprintEditorUtils::AddFunctionGraph(Blueprint, NewGraph, true, static_cast<UFunction*>(nullptr));
 
-	// Ensure function entry node exists
-	bool bHasEntry = false;
+	// Find or create the entry node
+	UK2Node_FunctionEntry* EntryNode = nullptr;
 	for (UEdGraphNode* Node : NewGraph->Nodes)
 	{
-		if (Cast<UK2Node_FunctionEntry>(Node))
-		{
-			bHasEntry = true;
-			break;
-		}
+		EntryNode = Cast<UK2Node_FunctionEntry>(Node);
+		if (EntryNode) break;
 	}
 
-	if (!bHasEntry)
+	if (!EntryNode)
 	{
-		// Create function entry node
-		UK2Node_FunctionEntry* EntryNode = NewObject<UK2Node_FunctionEntry>(NewGraph);
+		EntryNode = NewObject<UK2Node_FunctionEntry>(NewGraph);
 		EntryNode->CreateNewGuid();
 		EntryNode->PostPlacedNewNode();
 		EntryNode->AllocateDefaultPins();
 		NewGraph->AddNode(EntryNode);
 	}
 
-	UE_LOG(LogUnrealClaude, Log, TEXT("Added function '%s' to Blueprint '%s'"),
-		*FunctionName, *Blueprint->GetName());
+	// Interface function entry nodes must be editable so the Details panel exposes
+	// the Inputs/Outputs signature editor. AddFunctionGraph leaves bIsEditable=false
+	// for interface blueprints, making the signature permanently frozen.
+	if (Blueprint->BlueprintType == BPTYPE_Interface)
+	{
+		EntryNode->bIsEditable = true;
+	}
+
+	// Apply input parameters via UserDefinedPins (same mechanism as the Details panel "+")
+	if (InParams.Num() > 0)
+	{
+		for (const FBlueprintFunctionParam& Param : InParams)
+		{
+			TSharedPtr<FUserPinInfo> PinInfo = MakeShared<FUserPinInfo>();
+			PinInfo->PinName = FName(*Param.Name);
+			PinInfo->PinType = Param.PinType;
+			PinInfo->DesiredPinDirection = EGPD_Output;
+			EntryNode->UserDefinedPins.Add(PinInfo);
+		}
+		EntryNode->ReconstructNode();
+	}
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Added function '%s' (%d params) to Blueprint '%s'"),
+		*FunctionName, InParams.Num(), *Blueprint->GetName());
 	return true;
 }
 

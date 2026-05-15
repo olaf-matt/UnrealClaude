@@ -140,6 +140,15 @@ public:
 		return FBlueprintEditor::AddFunction(Blueprint, FunctionName, OutError);
 	}
 
+	FORCEINLINE static bool AddFunction(
+		UBlueprint* Blueprint,
+		const FString& FunctionName,
+		const TArray<FBlueprintFunctionParam>& InParams,
+		FString& OutError)
+	{
+		return FBlueprintEditor::AddFunction(Blueprint, FunctionName, InParams, OutError);
+	}
+
 	FORCEINLINE static bool RemoveFunction(
 		UBlueprint* Blueprint,
 		const FString& FunctionName,
