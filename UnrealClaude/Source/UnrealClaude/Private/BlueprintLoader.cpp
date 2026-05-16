@@ -12,6 +12,7 @@
 #include "Logging/MessageLog.h"
 #include "Misc/UObjectToken.h"
 #include "EdGraph/EdGraphNode.h"
+#include "Misc/PackageName.h"
 
 UBlueprint* FBlueprintLoader::LoadBlueprint(const FString& BlueprintPath, FString& OutError)
 {
@@ -268,6 +269,18 @@ UBlueprint* FBlueprintLoader::CreateBlueprint(
 
 	// Create the package path
 	FString FullPath = PackagePath / BlueprintName;
+
+	// Check on-disk first: FindObject only catches in-memory assets. If UE restarts with an
+	// existing asset on disk that hasn't been loaded yet, FindObject returns null and the guard
+	// below is bypassed — FactoryCreateNew then overwrites the file, corrupting the asset.
+	if (FPackageName::DoesPackageExist(FullPath))
+	{
+		OutError = FString::Printf(
+			TEXT("Blueprint '%s' already exists at '%s'. Delete it first or choose a different name."),
+			*BlueprintName, *FullPath);
+		return nullptr;
+	}
+
 	UPackage* Package = CreatePackage(*FullPath);
 	if (!Package)
 	{
@@ -275,8 +288,7 @@ UBlueprint* FBlueprintLoader::CreateBlueprint(
 		return nullptr;
 	}
 
-	// Guard against assert crash in Kismet2.cpp:435: FactoryCreateNew asserts that no Blueprint
-	// exists in the package yet, but CreatePackage returns an already-loaded package silently.
+	// Secondary in-memory guard: catches assets created this session but not yet saved to disk.
 	if (FindObject<UBlueprint>(Package, *BlueprintName))
 	{
 		OutError = FString::Printf(

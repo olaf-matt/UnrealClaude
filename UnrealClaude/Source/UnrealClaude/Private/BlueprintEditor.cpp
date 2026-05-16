@@ -219,6 +219,78 @@ bool FBlueprintEditor::RemoveFunction(
 	return true;
 }
 
+bool FBlueprintEditor::AddFunctionInput(
+	UBlueprint* Blueprint,
+	const FString& FunctionName,
+	const FString& InputName,
+	const FEdGraphPinType& PinType,
+	FString& OutError)
+{
+	if (!Blueprint)
+	{
+		OutError = TEXT("Blueprint is null");
+		return false;
+	}
+
+	// Find the function graph
+	UEdGraph* FuncGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName() == FunctionName)
+		{
+			FuncGraph = Graph;
+			break;
+		}
+	}
+
+	if (!FuncGraph)
+	{
+		OutError = FString::Printf(TEXT("Function '%s' not found"), *FunctionName);
+		return false;
+	}
+
+	// Find the entry node
+	UK2Node_FunctionEntry* EntryNode = nullptr;
+	for (UEdGraphNode* Node : FuncGraph->Nodes)
+	{
+		EntryNode = Cast<UK2Node_FunctionEntry>(Node);
+		if (EntryNode) break;
+	}
+
+	if (!EntryNode)
+	{
+		OutError = FString::Printf(TEXT("Entry node for function '%s' not found"), *FunctionName);
+		return false;
+	}
+
+	// Reject duplicate pin names
+	for (const TSharedPtr<FUserPinInfo>& Existing : EntryNode->UserDefinedPins)
+	{
+		if (Existing.IsValid() && Existing->PinName == FName(*InputName))
+		{
+			OutError = FString::Printf(TEXT("Input '%s' already exists on function '%s'"), *InputName, *FunctionName);
+			return false;
+		}
+	}
+
+	// Interface function entry nodes must be editable for the signature to accept changes
+	if (Blueprint->BlueprintType == BPTYPE_Interface)
+	{
+		EntryNode->bIsEditable = true;
+	}
+
+	TSharedPtr<FUserPinInfo> PinInfo = MakeShared<FUserPinInfo>();
+	PinInfo->PinName = FName(*InputName);
+	PinInfo->PinType = PinType;
+	PinInfo->DesiredPinDirection = EGPD_Output;
+	EntryNode->UserDefinedPins.Add(PinInfo);
+	EntryNode->ReconstructNode();
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Added input '%s' to function '%s' on Blueprint '%s'"),
+		*InputName, *FunctionName, *Blueprint->GetName());
+	return true;
+}
+
 // ===== Name Validation =====
 
 bool FBlueprintEditor::ValidateVariableName(const FString& VariableName, FString& OutError)

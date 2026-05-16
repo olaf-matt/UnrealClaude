@@ -13,6 +13,7 @@
  *   - add_variable: Add a variable to a Blueprint
  *   - remove_variable: Remove a variable from a Blueprint
  *   - add_function: Add an empty function to a Blueprint
+ *   - add_function_input: Add an input pin to an existing function (Interface blueprints only)
  *   - remove_function: Remove a function from a Blueprint
  *
  * Level 3 Operations (Nodes):
@@ -37,11 +38,12 @@ public:
 		Info.Description = TEXT(
 			"Create and modify Blueprints programmatically. Auto-compiles after each operation.\n\n"
 			"OPERATION → REQUIRED PARAMS:\n"
-			"  create          → package_path, blueprint_name, parent_class\n"
-			"  add_variable    → blueprint_path, variable_name, variable_type\n"
-			"  remove_variable → blueprint_path, variable_name\n"
-			"  add_function    → blueprint_path, function_name [, inputs]\n"
-			"  remove_function → blueprint_path, function_name\n"
+			"  create             → package_path, blueprint_name, parent_class\n"
+			"  add_variable       → blueprint_path, variable_name, variable_type\n"
+			"  remove_variable    → blueprint_path, variable_name\n"
+			"  add_function       → blueprint_path, function_name [, inputs]\n"
+			"  add_function_input → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
+			"  remove_function    → blueprint_path, function_name\n"
 			"  add_node        → blueprint_path, node_type [, graph_name, is_function_graph, node_params, pos_x, pos_y]\n"
 			"  add_nodes       → blueprint_path, nodes[] [, connections[], graph_name, is_function_graph]\n"
 			"  delete_node     → blueprint_path, node_id [, graph_name, is_function_graph]\n"
@@ -73,7 +75,7 @@ public:
 		Info.Parameters = {
 			// Operation selector
 			FMCPToolParameter(TEXT("operation"), TEXT("string"),
-				TEXT("create | add_variable | remove_variable | add_function | remove_function | add_node | add_nodes | delete_node | connect_pins | disconnect_pins | set_pin_value"), true),
+				TEXT("create | add_variable | remove_variable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | connect_pins | disconnect_pins | set_pin_value"), true),
 
 			// Common parameters
 			FMCPToolParameter(TEXT("blueprint_path"), TEXT("string"),
@@ -100,6 +102,10 @@ public:
 				TEXT("Function name. Required for add_function / remove_function."), false),
 			FMCPToolParameter(TEXT("inputs"), TEXT("array"),
 				TEXT("Optional function inputs for add_function: [{\"name\":\"ParamName\",\"type\":\"float\"}, ...]. Uses same type tokens as variable_type."), false),
+			FMCPToolParameter(TEXT("input_name"), TEXT("string"),
+				TEXT("Name of the input pin to add. Required for add_function_input."), false),
+			FMCPToolParameter(TEXT("input_type"), TEXT("string"),
+				TEXT("Type of the input pin for add_function_input. Same tokens as variable_type: bool | int | float | byte | string | Vector | Rotator | Transform."), false),
 
 			// For node operations
 			FMCPToolParameter(TEXT("graph_name"), TEXT("string"),
@@ -151,6 +157,7 @@ private:
 	FMCPToolResult ExecuteAddVariable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveVariable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddFunction(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteAddFunctionInput(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveFunction(const TSharedRef<FJsonObject>& Params);
 
 	// Level 3 Operations (Nodes)

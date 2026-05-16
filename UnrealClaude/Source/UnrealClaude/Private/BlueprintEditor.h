@@ -85,6 +85,24 @@ public:
 	);
 
 	/**
+	 * Add a single input pin to an existing function on a Blueprint Interface.
+	 * For regular Blueprints, use add_function with the inputs array instead.
+	 * @param Blueprint     - Blueprint to modify (must be BPTYPE_Interface)
+	 * @param FunctionName  - Name of the function graph to modify
+	 * @param InputName     - Name of the new input pin
+	 * @param PinType       - Type of the new input pin
+	 * @param OutError      - Error message if failed
+	 * @return true if successful
+	 */
+	static bool AddFunctionInput(
+		UBlueprint* Blueprint,
+		const FString& FunctionName,
+		const FString& InputName,
+		const FEdGraphPinType& PinType,
+		FString& OutError
+	);
+
+	/**
 	 * Remove function from Blueprint
 	 * @param Blueprint - Blueprint to modify
 	 * @param FunctionName - Name of function to remove

@@ -149,6 +149,16 @@ public:
 		return FBlueprintEditor::AddFunction(Blueprint, FunctionName, InParams, OutError);
 	}
 
+	FORCEINLINE static bool AddFunctionInput(
+		UBlueprint* Blueprint,
+		const FString& FunctionName,
+		const FString& InputName,
+		const FEdGraphPinType& PinType,
+		FString& OutError)
+	{
+		return FBlueprintEditor::AddFunctionInput(Blueprint, FunctionName, InputName, PinType, OutError);
+	}
+
 	FORCEINLINE static bool RemoveFunction(
 		UBlueprint* Blueprint,
 		const FString& FunctionName,

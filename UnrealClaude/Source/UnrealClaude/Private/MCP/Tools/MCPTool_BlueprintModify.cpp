@@ -14,6 +14,7 @@ namespace BlueprintModifyOps
 	static const FString AddVariable = TEXT("add_variable");
 	static const FString RemoveVariable = TEXT("remove_variable");
 	static const FString AddFunction = TEXT("add_function");
+	static const FString AddFunctionInput = TEXT("add_function_input");
 	static const FString RemoveFunction = TEXT("remove_function");
 	static const FString AddNode = TEXT("add_node");
 	static const FString AddNodes = TEXT("add_nodes");
@@ -52,6 +53,10 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	{
 		return ExecuteAddFunction(Params);
 	}
+	if (Operation == BlueprintModifyOps::AddFunctionInput)
+	{
+		return ExecuteAddFunctionInput(Params);
+	}
 	if (Operation == BlueprintModifyOps::RemoveFunction)
 	{
 		return ExecuteRemoveFunction(Params);
@@ -84,7 +89,7 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, add_function, remove_function, add_node, add_nodes, delete_node, connect_pins, disconnect_pins, set_pin_value"),
+		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, add_function, add_function_input, remove_function, add_node, add_nodes, delete_node, connect_pins, disconnect_pins, set_pin_value"),
 		*Operation));
 }
 
@@ -340,6 +345,74 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddFunction(const TSharedRef<FJs
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("Added function '%s' (%d params) to Blueprint"), *FunctionName, FunctionParams.Num()),
+		ResultData
+	);
+}
+
+FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddFunctionInput(const TSharedRef<FJsonObject>& Params)
+{
+	TOptional<FMCPToolResult> Error;
+
+	FString FunctionName;
+	if (!ExtractRequiredString(Params, TEXT("function_name"), FunctionName, Error))
+	{
+		return Error.GetValue();
+	}
+
+	FString InputName;
+	if (!ExtractRequiredString(Params, TEXT("input_name"), InputName, Error))
+	{
+		return Error.GetValue();
+	}
+
+	FString InputTypeStr;
+	if (!ExtractRequiredString(Params, TEXT("input_type"), InputTypeStr, Error))
+	{
+		return Error.GetValue();
+	}
+
+	// Parse pin type
+	FEdGraphPinType PinType;
+	FString TypeError;
+	if (!FBlueprintUtils::ParsePinType(InputTypeStr, PinType, TypeError))
+	{
+		return FMCPToolResult::Error(FString::Printf(TEXT("Unknown input_type '%s': %s"), *InputTypeStr, *TypeError));
+	}
+
+	// Validate names
+	FString ValidationError;
+	if (!FMCPParamValidator::ValidateBlueprintFunctionName(FunctionName, ValidationError))
+	{
+		return FMCPToolResult::Error(ValidationError);
+	}
+
+	// Load and validate Blueprint
+	FMCPBlueprintLoadContext Context;
+	if (auto LoadError = Context.LoadAndValidate(Params))
+	{
+		return LoadError.GetValue();
+	}
+
+	// Add the input pin
+	FString AddError;
+	if (!FBlueprintUtils::AddFunctionInput(Context.Blueprint, FunctionName, InputName, PinType, AddError))
+	{
+		return FMCPToolResult::Error(AddError);
+	}
+
+	// Compile and finalize
+	if (auto CompileError = Context.CompileAndFinalize(TEXT("Function input added")))
+	{
+		return CompileError.GetValue();
+	}
+
+	TSharedPtr<FJsonObject> ResultData = Context.BuildResultJson();
+	ResultData->SetStringField(TEXT("function_name"), FunctionName);
+	ResultData->SetStringField(TEXT("input_name"), InputName);
+	ResultData->SetStringField(TEXT("input_type"), InputTypeStr);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Added input '%s' (%s) to function '%s'"), *InputName, *InputTypeStr, *FunctionName),
 		ResultData
 	);
 }
