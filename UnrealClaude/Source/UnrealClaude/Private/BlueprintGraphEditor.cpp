@@ -13,6 +13,7 @@
 #include "EdGraphSchema_K2.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Kismet/KismetArrayLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
 
@@ -637,7 +638,9 @@ FString FBlueprintGraphEditor::GetNodeId(UEdGraphNode* Node)
 		return Node->NodeComment.RightChop(NodeIdPrefix.Len());
 	}
 
-	return FString();
+	// Engine-created nodes (BeginPlay, FunctionEntry, etc.) have no MCP comment.
+	// Fall back to NodeGuid so blueprint_query and modify ops share the same ID space.
+	return Node->NodeGuid.ToString();
 }
 
 // ===== Private Node Creation Helpers =====
@@ -675,6 +678,10 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			{
 				FunctionOwner = UKismetMathLibrary::StaticClass();
 			}
+			else if (TargetClass.Equals(TEXT("KismetArrayLibrary"), ESearchCase::IgnoreCase))
+			{
+				FunctionOwner = UKismetArrayLibrary::StaticClass();
+			}
 			else if (TargetClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
 			{
 				FunctionOwner = UGameplayStatics::StaticClass();
@@ -700,6 +707,10 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (!Function)
 	{
 		Function = UKismetMathLibrary::StaticClass()->FindFunctionByName(FName(*FunctionName));
+	}
+	if (!Function)
+	{
+		Function = UKismetArrayLibrary::StaticClass()->FindFunctionByName(FName(*FunctionName));
 	}
 	if (!Function)
 	{
@@ -733,7 +744,7 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (!Function && !bIsSelfCall)
 	{
 		OutError = FString::Printf(
-			TEXT("Function '%s' not found in KismetSystemLibrary, KismetMathLibrary, GameplayStatics, or this Blueprint's own functions"),
+			TEXT("Function '%s' not found in KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, GameplayStatics, or this Blueprint's own functions"),
 			*FunctionName);
 		return nullptr;
 	}
