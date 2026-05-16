@@ -13,6 +13,7 @@
 #include "EdGraphSchema_K2.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
 
 // Static member initialization
@@ -674,6 +675,10 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			{
 				FunctionOwner = UKismetMathLibrary::StaticClass();
 			}
+			else if (TargetClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
+			{
+				FunctionOwner = UGameplayStatics::StaticClass();
+			}
 		}
 	}
 	else
@@ -696,17 +701,54 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	{
 		Function = UKismetMathLibrary::StaticClass()->FindFunctionByName(FName(*FunctionName));
 	}
-
 	if (!Function)
 	{
-		OutError = FString::Printf(TEXT("Function '%s' not found"), *FunctionName);
+		Function = UGameplayStatics::StaticClass()->FindFunctionByName(FName(*FunctionName));
+	}
+
+	// Check Blueprint's own user-defined functions (self-call).
+	// We check FunctionGraphs by name (reliable pre-compile), then fall back to
+	// GeneratedClass lookup for inherited/compiled Blueprint functions.
+	bool bIsSelfCall = false;
+	if (!Function)
+	{
+		UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+		if (Blueprint)
+		{
+			for (UEdGraph* FuncGraph : Blueprint->FunctionGraphs)
+			{
+				if (FuncGraph && FuncGraph->GetName() == FunctionName)
+				{
+					bIsSelfCall = true;
+					break;
+				}
+			}
+			if (!bIsSelfCall && Blueprint->GeneratedClass)
+			{
+				Function = Blueprint->GeneratedClass->FindFunctionByName(FName(*FunctionName));
+			}
+		}
+	}
+
+	if (!Function && !bIsSelfCall)
+	{
+		OutError = FString::Printf(
+			TEXT("Function '%s' not found in KismetSystemLibrary, KismetMathLibrary, GameplayStatics, or this Blueprint's own functions"),
+			*FunctionName);
 		return nullptr;
 	}
 
 	// Create the node
 	FGraphNodeCreator<UK2Node_CallFunction> NodeCreator(*Graph);
 	UK2Node_CallFunction* CallNode = NodeCreator.CreateNode();
-	CallNode->SetFromFunction(Function);
+	if (bIsSelfCall)
+	{
+		CallNode->FunctionReference.SetSelfMember(FName(*FunctionName));
+	}
+	else
+	{
+		CallNode->SetFromFunction(Function);
+	}
 	CallNode->NodePosX = PosX;
 	CallNode->NodePosY = PosY;
 	NodeCreator.Finalize();
