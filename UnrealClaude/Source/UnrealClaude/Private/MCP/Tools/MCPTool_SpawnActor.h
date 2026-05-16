@@ -30,8 +30,8 @@ public:
 			"Returns: Actor name, class, label, and spawn location."
 		);
 		Info.Parameters = {
-			FMCPToolParameter(TEXT("class"), TEXT("string"), TEXT("The class path to spawn (e.g., '/Script/Engine.PointLight' or 'StaticMeshActor')"), true),
-			FMCPToolParameter(TEXT("name"), TEXT("string"), TEXT("Optional name for the spawned actor"), false),
+			FMCPToolParameter(TEXT("class"), TEXT("string"), TEXT("Class path to spawn. Short names: 'PointLight', 'SpotLight', 'DirectionalLight', 'StaticMeshActor', 'CameraActor', 'PlayerStart'. Full paths: '/Script/Engine.PointLight', '/Game/Blueprints/BP_MyActor'."), true),
+			FMCPToolParameter(TEXT("name"), TEXT("string"), TEXT("Sets the actor's Outliner display label. Required if move_actor, set_property, get_level_actors, or delete_actors need to reference this actor by name later."), false),
 			FMCPToolParameter(TEXT("location"), TEXT("object"), TEXT("Spawn location {x, y, z}"), false, TEXT("{\"x\":0,\"y\":0,\"z\":0}")),
 			FMCPToolParameter(TEXT("rotation"), TEXT("object"), TEXT("Spawn rotation {pitch, yaw, roll}"), false, TEXT("{\"pitch\":0,\"yaw\":0,\"roll\":0}")),
 			FMCPToolParameter(TEXT("scale"), TEXT("object"), TEXT("Spawn scale {x, y, z}"), false, TEXT("{\"x\":1,\"y\":1,\"z\":1}"))

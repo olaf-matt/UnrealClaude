@@ -31,41 +31,52 @@ FMCPToolInfo FMCPTool_Material::GetInfo() const
 {
 	FMCPToolInfo Info;
 	Info.Name = TEXT("material");
-	Info.Description = TEXT("Material instance creation and assignment operations for meshes and actors");
+	Info.Description = TEXT(
+		"Material instance creation, parameter editing, and assignment for actors and meshes.\n\n"
+		"OPERATION → REQUIRED PARAMS:\n"
+		"  create_material_instance  → asset_name, parent_material [, package_path, parameters]\n"
+		"  set_material_parameters   → material_instance_path, parameters\n"
+		"  set_skeletal_mesh_material→ skeletal_mesh_path, material_slot, material_path\n"
+		"  set_actor_material        → actor_name, material_path [, material_slot]\n"
+		"  get_material_info         → asset_path\n\n"
+		"PARAMETERS OBJECT FORMAT:\n"
+		"  {\"scalars\":{\"Roughness\":0.5},\"vectors\":{\"BaseColor\":{\"R\":1,\"G\":0,\"B\":0,\"A\":1}},\"textures\":{\"DiffuseMap\":\"/Game/Textures/T_Rock\"}}\n"
+		"  Vector values use uppercase R/G/B/A."
+	);
 
 	// Parameters
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
-		TEXT("Operation: create_material_instance, set_material_parameters, set_skeletal_mesh_material, set_actor_material, get_material_info"), true));
+		TEXT("create_material_instance | set_material_parameters | set_skeletal_mesh_material | set_actor_material | get_material_info"), true));
 
 	// create_material_instance params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("asset_name"), TEXT("string"),
-		TEXT("Name for the new material instance asset (for create_material_instance)")));
+		TEXT("Asset name for new material instance (no extension). Required for create_material_instance.")));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("parent_material"), TEXT("string"),
-		TEXT("Asset path to parent material (for create_material_instance)")));
+		TEXT("Asset path to parent material (e.g., '/Game/Materials/M_Rock'). Required for create_material_instance.")));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("package_path"), TEXT("string"),
-		TEXT("Package path for new asset (default: /Game/Materials/)")));
+		TEXT("Folder path for new asset (e.g., '/Game/Materials'). Default: '/Game/Materials'.")));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("parameters"), TEXT("object"),
-		TEXT("Material parameters to set: {scalars: {name: value}, vectors: {name: {r,g,b,a}}, textures: {name: path}}")));
+		TEXT("Parameters to set: {\"scalars\":{\"Name\":value}, \"vectors\":{\"Name\":{\"R\":r,\"G\":g,\"B\":b,\"A\":a}}, \"textures\":{\"Name\":\"/Game/path\"}}.")));
 
 	// set_material_parameters params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("material_instance_path"), TEXT("string"),
-		TEXT("Asset path to material instance (for set_material_parameters)")));
+		TEXT("Asset path to an existing material instance. Required for set_material_parameters.")));
 
 	// set_skeletal_mesh_material params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("skeletal_mesh_path"), TEXT("string"),
-		TEXT("Asset path to skeletal mesh (for set_skeletal_mesh_material)")));
+		TEXT("Asset path to skeletal mesh (e.g., '/Game/Characters/SK_Hero'). Required for set_skeletal_mesh_material.")));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("material_slot"), TEXT("integer"),
-		TEXT("Material slot index to set (for set_skeletal_mesh_material)")));
+		TEXT("Zero-based material slot index. Required for set_skeletal_mesh_material. Use get_material_info to list slots.")));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("material_path"), TEXT("string"),
-		TEXT("Asset path to material to assign (for set_skeletal_mesh_material)")));
+		TEXT("Asset path to material or material instance to assign. Required for set_skeletal_mesh_material.")));
 
 	// set_actor_material params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("actor_name"), TEXT("string"),
-		TEXT("Name or label of the actor to assign material to (for set_actor_material)")));
+		TEXT("Actor Outliner label or internal name. Required for set_actor_material.")));
 
 	// get_material_info params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("asset_path"), TEXT("string"),
-		TEXT("Asset path to material (for get_material_info)")));
+		TEXT("Asset path to a material or material instance (e.g., '/Game/Materials/MI_Rock'). Required for get_material_info.")));
 
 	Info.Annotations = FMCPToolAnnotations::Modifying();
 

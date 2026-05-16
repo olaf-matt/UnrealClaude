@@ -14,6 +14,14 @@
 
 - **Node GUID acceptance (documented)** — `connect_pins`, `delete_node`, and `set_pin_value` accept node GUIDs returned by `blueprint_query` `get_graph`, not just MCP-generated IDs. This was already implemented but undocumented; the context file now clearly describes both accepted ID formats.
 
+- **Comprehensive tool description improvements** — All major tool schemas updated with actionable parameter guidance to reduce trial-and-error:
+  - `blueprint_modify`: Added per-operation required-params quick-reference, per-node-type `node_params` examples (`CallFunction` self vs library calls, `VariableGet/Set`, `Event`, `Sequence`), exec pin naming guide (`execute`/`then`, `True`/`False`, `then_0`…), `variable_type` list corrected to supported primitives only (object ref types removed — they must be added manually), `inputs` array for `add_function` now documented, `graph_name` + `is_function_graph` combination usage clarified.
+  - `blueprint_query`: Added 4-step workflow guide, explicit note that `get_nodes` returns IDs usable directly by `blueprint_modify`, `get_node_pins` highlighted as the pre-wiring pin-discovery step, `graph_name` behavior clarified per operation.
+  - `set_property`: Added value format table (FVector uppercase X/Y/Z, FLinearColor R/G/B/A + hex `#RRGGBBAA`, FRotator Pitch/Yaw/Roll), component name casing note, `actor_name` clarified as label or internal name.
+  - `spawn_actor`: `name` param clarified as the Outliner label required for other tools to find the actor.
+  - `material`: Added operation quick-reference, `parameters` object format example with uppercase R/G/B/A, required-param notes per operation.
+  - `anim_blueprint_modify`: `source_pin`/`target_pin` now list typical pin names per node type and reference `inspect_node_pins` for discovery.
+
 ---
 
 ## [1.4.5] — 2026-04
