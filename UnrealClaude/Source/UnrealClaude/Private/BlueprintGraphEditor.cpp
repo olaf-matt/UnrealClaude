@@ -1170,7 +1170,7 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCastNode(
 	FGraphNodeCreator<UK2Node_DynamicCast> NodeCreator(*Graph);
 	UK2Node_DynamicCast* CastNode = NodeCreator.CreateNode();
 	CastNode->TargetType = TargetClass;
-	CastNode->bIsPureCast = bPureCast;
+	CastNode->SetPurity(bPureCast);
 	CastNode->NodePosX = PosX;
 	CastNode->NodePosY = PosY;
 	NodeCreator.Finalize();
