@@ -15,10 +15,13 @@
 #include "K2Node_MakeStruct.h"
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_Select.h"
 #include "EdGraphSchema_K2.h"
+#include "BlueprintEditor.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetArrayLibrary.h"
+#include "Kismet/KismetStringLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
 
@@ -80,6 +83,65 @@ UEdGraph* FBlueprintGraphEditor::FindGraph(
 }
 
 // ===== Node Management =====
+
+// Maps a user-facing node type name to a KismetMathLibrary function name.
+// Returns empty string if the op is not a recognised math/comparison/boolean node.
+static FString ResolveMathFuncName(const FString& Op, const FString& TypeHint)
+{
+	const bool bInt  = TypeHint.Equals(TEXT("int"),   ESearchCase::IgnoreCase)
+	                || TypeHint.Equals(TEXT("int32"), ESearchCase::IgnoreCase);
+	const bool bBool = TypeHint.Equals(TEXT("bool"),  ESearchCase::IgnoreCase);
+
+	// Comparisons — float default, int/bool variants via 'type' param
+	if (Op.Equals(TEXT("Equal"),        ESearchCase::IgnoreCase) ||
+	    Op.Equals(TEXT("EqualEqual"),   ESearchCase::IgnoreCase))
+		return bInt  ? TEXT("EqualEqual_IntInt")
+		     : bBool ? TEXT("EqualEqual_BoolBool")
+		     :         TEXT("EqualEqual_FloatFloat");
+
+	if (Op.Equals(TEXT("NotEqual"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("NotEqual_IntInt") : TEXT("NotEqual_FloatFloat");
+
+	if (Op.Equals(TEXT("Less"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Less_IntInt")      : TEXT("Less_FloatFloat");
+	if (Op.Equals(TEXT("LessEqual"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("LessEqual_IntInt") : TEXT("LessEqual_FloatFloat");
+	if (Op.Equals(TEXT("Greater"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Greater_IntInt")      : TEXT("Greater_FloatFloat");
+	if (Op.Equals(TEXT("GreaterEqual"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("GreaterEqual_IntInt") : TEXT("GreaterEqual_FloatFloat");
+
+	// Boolean ops
+	if (Op.Equals(TEXT("BoolAND"), ESearchCase::IgnoreCase) || Op.Equals(TEXT("AND"), ESearchCase::IgnoreCase))
+		return TEXT("BooleanAND");
+	if (Op.Equals(TEXT("BoolOR"),  ESearchCase::IgnoreCase) || Op.Equals(TEXT("OR"),  ESearchCase::IgnoreCase))
+		return TEXT("BooleanOR");
+	if (Op.Equals(TEXT("BoolNOT"), ESearchCase::IgnoreCase) || Op.Equals(TEXT("NOT"), ESearchCase::IgnoreCase))
+		return TEXT("Not_PreBool");
+	if (Op.Equals(TEXT("BoolXOR"), ESearchCase::IgnoreCase) || Op.Equals(TEXT("XOR"), ESearchCase::IgnoreCase))
+		return TEXT("BooleanXOR");
+
+	// Extended math — float default, int variants via 'type': 'int'
+	if (Op.Equals(TEXT("Clamp"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Clamp")   : TEXT("FClamp");
+	if (Op.Equals(TEXT("Min"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Min")     : TEXT("FMin");
+	if (Op.Equals(TEXT("Max"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Max")     : TEXT("FMax");
+	if (Op.Equals(TEXT("Abs"), ESearchCase::IgnoreCase))
+		return bInt ? TEXT("Abs_Int") : TEXT("Abs");
+	if (Op.Equals(TEXT("Lerp"),              ESearchCase::IgnoreCase)) return TEXT("Lerp");
+	if (Op.Equals(TEXT("MapRangeClamped"),   ESearchCase::IgnoreCase)) return TEXT("MapRangeClamped");
+	if (Op.Equals(TEXT("MapRangeUnclamped"), ESearchCase::IgnoreCase)) return TEXT("MapRangeUnclamped");
+
+	// Vector math
+	if (Op.Equals(TEXT("VectorLength"), ESearchCase::IgnoreCase)) return TEXT("VSize");
+	if (Op.Equals(TEXT("Normalize"),    ESearchCase::IgnoreCase)) return TEXT("Normal");
+	if (Op.Equals(TEXT("DotProduct"),   ESearchCase::IgnoreCase)) return TEXT("Dot_VectorVector");
+	if (Op.Equals(TEXT("CrossProduct"), ESearchCase::IgnoreCase)) return TEXT("Cross_VectorVector");
+
+	return TEXT("");
+}
 
 UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 	UEdGraph* Graph,
@@ -184,10 +246,43 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 	{
 		NewNode = CreateForEachLoopNode(Graph, true, PosX, PosY, OutError);
 	}
+	else if (NodeType.Equals(TEXT("Select"), ESearchCase::IgnoreCase))
+	{
+		FString TypeName = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("type")) : TEXT("");
+		int32 NumOptions = 4;
+		if (NodeParams.IsValid() && NodeParams->HasField(TEXT("num_options")))
+			NumOptions = (int32)NodeParams->GetNumberField(TEXT("num_options"));
+		NewNode = CreateSelectNode(Graph, TypeName, NumOptions, PosX, PosY, OutError);
+	}
+	else if (NodeType.Equals(TEXT("IsValid"), ESearchCase::IgnoreCase))
+	{
+		Context = TEXT("IsValid");
+		NewNode = CreateCallFunctionNode(Graph, TEXT("IsValid"), TEXT("KismetSystemLibrary"), PosX, PosY, OutError);
+	}
 	else
 	{
-		OutError = FString::Printf(TEXT("Unknown node type: '%s'. Supported: CallFunction, Branch, Event, VariableGet, VariableSet, Sequence, Add, Subtract, Multiply, Divide, PrintString, Cast, MakeStruct, BreakStruct, ForEachLoop, ForEachLoopWithBreak"), *NodeType);
-		return nullptr;
+		// Dynamic dispatch: comparisons, boolean ops, extended math, vector math
+		FString TypeHint;
+		if (NodeParams.IsValid()) NodeParams->TryGetStringField(TEXT("type"), TypeHint);
+		FString MathFunc = ResolveMathFuncName(NodeType, TypeHint);
+		if (!MathFunc.IsEmpty())
+		{
+			Context = MathFunc;
+			NewNode = CreateCallFunctionNode(Graph, MathFunc, TEXT("KismetMathLibrary"), PosX, PosY, OutError);
+		}
+		else
+		{
+			OutError = FString::Printf(TEXT("Unknown node type: '%s'. Supported: "
+				"CallFunction, Branch, Event, VariableGet, VariableSet, Sequence, "
+				"Add, Subtract, Multiply, Divide, PrintString, Cast, MakeStruct, BreakStruct, "
+				"ForEachLoop, ForEachLoopWithBreak, Select, IsValid | "
+				"Comparisons (add type:'int' for int variant): Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual | "
+				"Boolean: BoolAND, BoolOR, BoolNOT, BoolXOR | "
+				"Math: Clamp, Min, Max, Abs, Lerp, MapRangeClamped, MapRangeUnclamped | "
+				"Vector: VectorLength, Normalize, DotProduct, CrossProduct"),
+				*NodeType);
+			return nullptr;
+		}
 	}
 
 	if (NewNode)
@@ -721,6 +816,10 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			{
 				FunctionOwner = UKismetArrayLibrary::StaticClass();
 			}
+			else if (TargetClass.Equals(TEXT("KismetStringLibrary"), ESearchCase::IgnoreCase))
+			{
+				FunctionOwner = UKismetStringLibrary::StaticClass();
+			}
 			else if (TargetClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
 			{
 				FunctionOwner = UGameplayStatics::StaticClass();
@@ -750,6 +849,10 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (!Function)
 	{
 		Function = UKismetArrayLibrary::StaticClass()->FindFunctionByName(FName(*FunctionName));
+	}
+	if (!Function)
+	{
+		Function = UKismetStringLibrary::StaticClass()->FindFunctionByName(FName(*FunctionName));
 	}
 	if (!Function)
 	{
@@ -1285,4 +1388,46 @@ UEdGraphNode* FBlueprintGraphEditor::CreateForEachLoopNode(
 	NodeCreator.Finalize();
 
 	return MacroNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateSelectNode(
+	UEdGraph* Graph,
+	const FString& TypeName,
+	int32 NumOptions,
+	int32 PosX,
+	int32 PosY,
+	FString& OutError)
+{
+	if (NumOptions < 2) NumOptions = 2;
+	if (NumOptions > 16) NumOptions = 16;
+
+	FGraphNodeCreator<UK2Node_Select> NodeCreator(*Graph);
+	UK2Node_Select* SelectNode = NodeCreator.CreateNode();
+	SelectNode->NumOptionPins = NumOptions;
+	SelectNode->NodePosX = PosX;
+	SelectNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+
+	// If a type was specified, set the option and return value pin types explicitly.
+	// Type will also resolve automatically when pins are connected.
+	if (!TypeName.IsEmpty())
+	{
+		FEdGraphPinType PinType;
+		FString TypeError;
+		if (FBlueprintEditor::ParsePinType(TypeName, PinType, TypeError))
+		{
+			TArray<UEdGraphPin*> OptionPins;
+			SelectNode->GetOptionPins(OptionPins);
+			for (UEdGraphPin* Pin : OptionPins)
+			{
+				Pin->PinType = PinType;
+			}
+			if (UEdGraphPin* ReturnPin = SelectNode->GetReturnValuePin())
+			{
+				ReturnPin->PinType = PinType;
+			}
+		}
+	}
+
+	return SelectNode;
 }

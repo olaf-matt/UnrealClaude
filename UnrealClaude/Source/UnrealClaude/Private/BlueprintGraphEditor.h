@@ -17,14 +17,22 @@
  * - Node ID system for tracking
  *
  * Supported Node Types:
- * - Flow: Branch, Sequence, ForEachLoop, ForEachLoopWithBreak
- * - Functions: CallFunction, PrintString
- * - Variables: VariableGet, VariableSet
- * - Events: Event (BeginPlay, Tick, EndPlay)
- * - Math: Add, Subtract, Multiply, Divide
- * - Cast: { "class": "TargetClassName" } — output pin: "As TargetClassName", fail pin: "CastFailed"
- *           optional "pure": true for a pure cast (no exec pins, adds "bSuccess" output)
- * - MakeStruct: { "struct": "StructName" } — makes struct from individual field pins
+ * - Flow:        Branch, Sequence, ForEachLoop, ForEachLoopWithBreak
+ * - Functions:   CallFunction, PrintString
+ * - Variables:   VariableGet, VariableSet
+ * - Events:      Event (BeginPlay, Tick, EndPlay)
+ * - Math:        Add, Subtract, Multiply, Divide
+ *                Clamp, Min, Max, Abs, Lerp, MapRangeClamped, MapRangeUnclamped
+ *                (add optional "type": "int" param for integer variants)
+ * - Vector math: VectorLength, Normalize, DotProduct, CrossProduct
+ * - Comparisons: Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual
+ *                (add optional "type": "int" or "type": "bool" for typed variants)
+ * - Boolean:     BoolAND (alias AND), BoolOR (alias OR), BoolNOT (alias NOT), BoolXOR (alias XOR)
+ * - Other:       IsValid
+ * - Select:      { "type": "float", "num_options": 4 } — picks one of N values by index
+ * - Cast:        { "class": "TargetClassName" } — output pin: "As TargetClassName", fail pin: "CastFailed"
+ *                optional "pure": true for a pure cast (no exec pins, adds "bSuccess" output)
+ * - MakeStruct:  { "struct": "StructName" } — makes struct from individual field pins
  * - BreakStruct: { "struct": "StructName" } — breaks struct into individual field pins
  *
  * Node ID System:
@@ -230,6 +238,7 @@ private:
 	static UEdGraphNode* CreateMakeStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateBreakStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateForEachLoopNode(UEdGraph* Graph, bool bWithBreak, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateSelectNode(UEdGraph* Graph, const FString& TypeName, int32 NumOptions, int32 PosX, int32 PosY, FString& OutError);
 
 	/** Resolve a short class name (e.g. "ExponentialHeightFogComponent") to a UClass*. Searches /Script/Engine first, then all loaded packages. */
 	static UClass* ResolveClassByName(const FString& ClassName);
