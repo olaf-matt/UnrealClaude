@@ -97,19 +97,19 @@ static FString ResolveMathFuncName(const FString& Op, const FString& TypeHint)
 	    Op.Equals(TEXT("EqualEqual"),   ESearchCase::IgnoreCase))
 		return bInt  ? TEXT("EqualEqual_IntInt")
 		     : bBool ? TEXT("EqualEqual_BoolBool")
-		     :         TEXT("EqualEqual_FloatFloat");
+		     :         TEXT("EqualEqual_DoubleDouble");
 
 	if (Op.Equals(TEXT("NotEqual"), ESearchCase::IgnoreCase))
-		return bInt ? TEXT("NotEqual_IntInt") : TEXT("NotEqual_FloatFloat");
+		return bInt ? TEXT("NotEqual_IntInt") : TEXT("NotEqual_DoubleDouble");
 
 	if (Op.Equals(TEXT("Less"), ESearchCase::IgnoreCase))
-		return bInt ? TEXT("Less_IntInt")      : TEXT("Less_FloatFloat");
+		return bInt ? TEXT("Less_IntInt")      : TEXT("Less_DoubleDouble");
 	if (Op.Equals(TEXT("LessEqual"), ESearchCase::IgnoreCase))
-		return bInt ? TEXT("LessEqual_IntInt") : TEXT("LessEqual_FloatFloat");
+		return bInt ? TEXT("LessEqual_IntInt") : TEXT("LessEqual_DoubleDouble");
 	if (Op.Equals(TEXT("Greater"), ESearchCase::IgnoreCase))
-		return bInt ? TEXT("Greater_IntInt")      : TEXT("Greater_FloatFloat");
+		return bInt ? TEXT("Greater_IntInt")      : TEXT("Greater_DoubleDouble");
 	if (Op.Equals(TEXT("GreaterEqual"), ESearchCase::IgnoreCase))
-		return bInt ? TEXT("GreaterEqual_IntInt") : TEXT("GreaterEqual_FloatFloat");
+		return bInt ? TEXT("GreaterEqual_IntInt") : TEXT("GreaterEqual_DoubleDouble");
 
 	// Boolean ops
 	if (Op.Equals(TEXT("BoolAND"), ESearchCase::IgnoreCase) || Op.Equals(TEXT("AND"), ESearchCase::IgnoreCase))
