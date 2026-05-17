@@ -11,6 +11,10 @@
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_ExecutionSequence.h"
+#include "K2Node_DynamicCast.h"
+#include "K2Node_MakeStruct.h"
+#include "K2Node_BreakStruct.h"
+#include "K2Node_MacroInstance.h"
 #include "EdGraphSchema_K2.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -152,9 +156,37 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 		Context = TEXT("PrintString");
 		NewNode = CreateCallFunctionNode(Graph, TEXT("PrintString"), TEXT("KismetSystemLibrary"), PosX, PosY, OutError);
 	}
+	else if (NodeType.Equals(TEXT("Cast"), ESearchCase::IgnoreCase) || NodeType.Equals(TEXT("DynamicCast"), ESearchCase::IgnoreCase))
+	{
+		FString ClassName = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("class")) : TEXT("");
+		bool bPure = false;
+		if (NodeParams.IsValid()) NodeParams->TryGetBoolField(TEXT("pure"), bPure);
+		Context = ClassName;
+		NewNode = CreateCastNode(Graph, ClassName, bPure, PosX, PosY, OutError);
+	}
+	else if (NodeType.Equals(TEXT("MakeStruct"), ESearchCase::IgnoreCase))
+	{
+		FString StructName = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("struct")) : TEXT("");
+		Context = StructName;
+		NewNode = CreateMakeStructNode(Graph, StructName, PosX, PosY, OutError);
+	}
+	else if (NodeType.Equals(TEXT("BreakStruct"), ESearchCase::IgnoreCase))
+	{
+		FString StructName = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("struct")) : TEXT("");
+		Context = StructName;
+		NewNode = CreateBreakStructNode(Graph, StructName, PosX, PosY, OutError);
+	}
+	else if (NodeType.Equals(TEXT("ForEachLoop"), ESearchCase::IgnoreCase))
+	{
+		NewNode = CreateForEachLoopNode(Graph, false, PosX, PosY, OutError);
+	}
+	else if (NodeType.Equals(TEXT("ForEachLoopWithBreak"), ESearchCase::IgnoreCase))
+	{
+		NewNode = CreateForEachLoopNode(Graph, true, PosX, PosY, OutError);
+	}
 	else
 	{
-		OutError = FString::Printf(TEXT("Unknown node type: '%s'. Supported: CallFunction, Branch, Event, VariableGet, VariableSet, Sequence, Add, Subtract, Multiply, Divide, PrintString"), *NodeType);
+		OutError = FString::Printf(TEXT("Unknown node type: '%s'. Supported: CallFunction, Branch, Event, VariableGet, VariableSet, Sequence, Add, Subtract, Multiply, Divide, PrintString, Cast, MakeStruct, BreakStruct, ForEachLoop, ForEachLoopWithBreak"), *NodeType);
 		return nullptr;
 	}
 
@@ -1031,4 +1063,226 @@ UEdGraphNode* FBlueprintGraphEditor::CreateMathNode(
 	NodeCreator.Finalize();
 
 	return MathNode;
+}
+
+// ===== Class / Struct Resolver Helpers =====
+
+UClass* FBlueprintGraphEditor::ResolveClassByName(const FString& ClassName)
+{
+	if (ClassName.IsEmpty()) return nullptr;
+
+	// If user supplied a full path (contains "."), try it directly
+	if (ClassName.Contains(TEXT(".")))
+	{
+		if (UClass* Class = FindObject<UClass>(nullptr, *ClassName))
+		{
+			return Class;
+		}
+	}
+
+	// Try common engine module package paths (fast, no disk load)
+	static const TCHAR* Modules[] = {
+		TEXT("Engine"),
+		TEXT("Niagara"),
+		TEXT("AIModule"),
+		TEXT("UMG"),
+		TEXT("GameplayAbilities"),
+		TEXT("Chaos"),
+		nullptr
+	};
+
+	for (int32 i = 0; Modules[i]; ++i)
+	{
+		FString Path = FString::Printf(TEXT("/Script/%s.%s"), Modules[i], *ClassName);
+		if (UClass* Class = FindObject<UClass>(nullptr, *Path))
+		{
+			return Class;
+		}
+	}
+
+	// Slow scan across all currently-loaded packages
+	return FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None);
+}
+
+UScriptStruct* FBlueprintGraphEditor::ResolveStructByName(const FString& StructName)
+{
+	if (StructName.IsEmpty()) return nullptr;
+
+	// Common structs resolved via TBaseStructure (avoids any object search)
+	FString Lower = StructName.ToLower();
+	if (Lower == TEXT("vector")      || Lower == TEXT("fvector"))      return TBaseStructure<FVector>::Get();
+	if (Lower == TEXT("rotator")     || Lower == TEXT("frotator"))     return TBaseStructure<FRotator>::Get();
+	if (Lower == TEXT("transform")   || Lower == TEXT("ftransform"))   return TBaseStructure<FTransform>::Get();
+	if (Lower == TEXT("linearcolor") || Lower == TEXT("flinearcolor")) return TBaseStructure<FLinearColor>::Get();
+	if (Lower == TEXT("vector2d")    || Lower == TEXT("fvector2d"))    return TBaseStructure<FVector2D>::Get();
+	if (Lower == TEXT("color")       || Lower == TEXT("fcolor"))       return TBaseStructure<FColor>::Get();
+
+	// If user supplied a full path, try it directly
+	if (StructName.Contains(TEXT(".")))
+	{
+		if (UScriptStruct* Struct = FindObject<UScriptStruct>(nullptr, *StructName))
+		{
+			return Struct;
+		}
+	}
+
+	// Try /Script/Engine and /Script/CoreUObject
+	for (const FString& Pkg : { FString(TEXT("/Script/Engine.")), FString(TEXT("/Script/CoreUObject.")) })
+	{
+		if (UScriptStruct* Struct = FindObject<UScriptStruct>(nullptr, *(Pkg + StructName)))
+		{
+			return Struct;
+		}
+	}
+
+	// Slow scan across all currently-loaded packages
+	return FindFirstObject<UScriptStruct>(*StructName, EFindFirstObjectOptions::None);
+}
+
+// ===== New Node Type Implementations =====
+
+UEdGraphNode* FBlueprintGraphEditor::CreateCastNode(
+	UEdGraph* Graph,
+	const FString& ClassName,
+	bool bPureCast,
+	int32 PosX,
+	int32 PosY,
+	FString& OutError)
+{
+	if (ClassName.IsEmpty())
+	{
+		OutError = TEXT("Cast requires 'class' param (e.g. 'ExponentialHeightFogComponent')");
+		return nullptr;
+	}
+
+	UClass* TargetClass = ResolveClassByName(ClassName);
+	if (!TargetClass)
+	{
+		OutError = FString::Printf(
+			TEXT("Cast target class '%s' not found. "
+			     "Tip: use the C++ class name without prefix (e.g. 'ExponentialHeightFogComponent' not 'UExponentialHeightFogComponent'). "
+			     "Ensure the relevant module is loaded in the editor."),
+			*ClassName);
+		return nullptr;
+	}
+
+	// TargetType must be set BEFORE Finalize() — AllocateDefaultPins() uses it to name the output pin
+	FGraphNodeCreator<UK2Node_DynamicCast> NodeCreator(*Graph);
+	UK2Node_DynamicCast* CastNode = NodeCreator.CreateNode();
+	CastNode->TargetType = TargetClass;
+	CastNode->bIsPureCast = bPureCast;
+	CastNode->NodePosX = PosX;
+	CastNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+
+	return CastNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateMakeStructNode(
+	UEdGraph* Graph,
+	const FString& StructName,
+	int32 PosX,
+	int32 PosY,
+	FString& OutError)
+{
+	if (StructName.IsEmpty())
+	{
+		OutError = TEXT("MakeStruct requires 'struct' param (e.g. 'Vector', 'Rotator', 'Transform')");
+		return nullptr;
+	}
+
+	UScriptStruct* TargetStruct = ResolveStructByName(StructName);
+	if (!TargetStruct)
+	{
+		OutError = FString::Printf(
+			TEXT("Struct '%s' not found. Common structs: Vector, Rotator, Transform, LinearColor, Vector2D."),
+			*StructName);
+		return nullptr;
+	}
+
+	FGraphNodeCreator<UK2Node_MakeStruct> NodeCreator(*Graph);
+	UK2Node_MakeStruct* MakeNode = NodeCreator.CreateNode();
+	MakeNode->StructType = TargetStruct;
+	MakeNode->NodePosX = PosX;
+	MakeNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+
+	return MakeNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateBreakStructNode(
+	UEdGraph* Graph,
+	const FString& StructName,
+	int32 PosX,
+	int32 PosY,
+	FString& OutError)
+{
+	if (StructName.IsEmpty())
+	{
+		OutError = TEXT("BreakStruct requires 'struct' param (e.g. 'Vector', 'Rotator', 'Transform')");
+		return nullptr;
+	}
+
+	UScriptStruct* TargetStruct = ResolveStructByName(StructName);
+	if (!TargetStruct)
+	{
+		OutError = FString::Printf(
+			TEXT("Struct '%s' not found. Common structs: Vector, Rotator, Transform, LinearColor, Vector2D."),
+			*StructName);
+		return nullptr;
+	}
+
+	FGraphNodeCreator<UK2Node_BreakStruct> NodeCreator(*Graph);
+	UK2Node_BreakStruct* BreakNode = NodeCreator.CreateNode();
+	BreakNode->StructType = TargetStruct;
+	BreakNode->NodePosX = PosX;
+	BreakNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+
+	return BreakNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateForEachLoopNode(
+	UEdGraph* Graph,
+	bool bWithBreak,
+	int32 PosX,
+	int32 PosY,
+	FString& OutError)
+{
+	// Load the engine standard macros blueprint
+	UBlueprint* MacroBlueprint = Cast<UBlueprint>(StaticLoadObject(
+		UBlueprint::StaticClass(), nullptr,
+		TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros")));
+
+	if (!MacroBlueprint)
+	{
+		OutError = TEXT("Could not load /Engine/EditorBlueprintResources/StandardMacros — ForEachLoop unavailable");
+		return nullptr;
+	}
+
+	const FString MacroName = bWithBreak ? TEXT("ForEachLoopWithBreak") : TEXT("ForEachLoop");
+	UEdGraph* MacroGraph = nullptr;
+	for (UEdGraph* G : MacroBlueprint->MacroGraphs)
+	{
+		if (G && G->GetName().Equals(MacroName, ESearchCase::IgnoreCase))
+		{
+			MacroGraph = G;
+			break;
+		}
+	}
+
+	if (!MacroGraph)
+	{
+		OutError = FString::Printf(TEXT("Macro '%s' not found in StandardMacros"), *MacroName);
+		return nullptr;
+	}
+
+	FGraphNodeCreator<UK2Node_MacroInstance> NodeCreator(*Graph);
+	UK2Node_MacroInstance* MacroNode = NodeCreator.CreateNode();
+	MacroNode->SetMacroGraph(MacroGraph);
+	MacroNode->NodePosX = PosX;
+	MacroNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+
+	return MacroNode;
 }

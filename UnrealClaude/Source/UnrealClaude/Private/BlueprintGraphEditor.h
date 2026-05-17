@@ -17,11 +17,15 @@
  * - Node ID system for tracking
  *
  * Supported Node Types:
- * - Flow: Branch, Sequence
+ * - Flow: Branch, Sequence, ForEachLoop, ForEachLoopWithBreak
  * - Functions: CallFunction, PrintString
  * - Variables: VariableGet, VariableSet
  * - Events: Event (BeginPlay, Tick, EndPlay)
  * - Math: Add, Subtract, Multiply, Divide
+ * - Cast: { "class": "TargetClassName" } — output pin: "As TargetClassName", fail pin: "CastFailed"
+ *           optional "pure": true for a pure cast (no exec pins, adds "bSuccess" output)
+ * - MakeStruct: { "struct": "StructName" } — makes struct from individual field pins
+ * - BreakStruct: { "struct": "StructName" } — breaks struct into individual field pins
  *
  * Node ID System:
  * - Auto-generated descriptive IDs stored in NodeComment
@@ -222,6 +226,16 @@ private:
 	static UEdGraphNode* CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateSequenceNode(UEdGraph* Graph, int32 NumOutputs, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateMathNode(UEdGraph* Graph, const FString& MathOp, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateCastNode(UEdGraph* Graph, const FString& ClassName, bool bPureCast, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateMakeStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateBreakStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateForEachLoopNode(UEdGraph* Graph, bool bWithBreak, int32 PosX, int32 PosY, FString& OutError);
+
+	/** Resolve a short class name (e.g. "ExponentialHeightFogComponent") to a UClass*. Searches /Script/Engine first, then all loaded packages. */
+	static UClass* ResolveClassByName(const FString& ClassName);
+
+	/** Resolve a short struct name (e.g. "Vector") to a UScriptStruct*. Handles FVector/FRotator/FTransform directly; falls back to object search. */
+	static UScriptStruct* ResolveStructByName(const FString& StructName);
 
 	// ID prefix for node comments
 	static const FString NodeIdPrefix;

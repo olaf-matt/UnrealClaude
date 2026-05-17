@@ -697,6 +697,13 @@ bool FMCPTool_BlueprintModify::CreateNodesFromSpec(
 				NodeParams->SetStringField(TEXT("variable"), (*NodeSpec)->GetStringField(TEXT("variable")));
 			if ((*NodeSpec)->HasField(TEXT("num_outputs")))
 				NodeParams->SetNumberField(TEXT("num_outputs"), (*NodeSpec)->GetNumberField(TEXT("num_outputs")));
+			if ((*NodeSpec)->HasField(TEXT("class")))
+				NodeParams->SetStringField(TEXT("class"), (*NodeSpec)->GetStringField(TEXT("class")));
+			if ((*NodeSpec)->HasField(TEXT("struct")))
+				NodeParams->SetStringField(TEXT("struct"), (*NodeSpec)->GetStringField(TEXT("struct")));
+			bool bPureField = false;
+			if ((*NodeSpec)->TryGetBoolField(TEXT("pure"), bPureField))
+				NodeParams->SetBoolField(TEXT("pure"), bPureField);
 		}
 
 		// Create node
