@@ -339,6 +339,15 @@ bool FBlueprintGraphEditor::ConnectPins(
 	// Make the connection
 	SourcePin->MakeLinkTo(TargetPin);
 
+	// Wildcard pins don't propagate their resolved type through MakeLinkTo alone —
+	// ReconstructNode re-evaluates pin types on both ends so the graph can compile.
+	if (SourcePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard ||
+		TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard)
+	{
+		SourceNode->ReconstructNode();
+		TargetNode->ReconstructNode();
+	}
+
 	UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
 	if (Blueprint)
 	{
