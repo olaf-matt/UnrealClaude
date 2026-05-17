@@ -1403,10 +1403,18 @@ UEdGraphNode* FBlueprintGraphEditor::CreateSelectNode(
 
 	FGraphNodeCreator<UK2Node_Select> NodeCreator(*Graph);
 	UK2Node_Select* SelectNode = NodeCreator.CreateNode();
-	SelectNode->NumOptionPins = NumOptions;
 	SelectNode->NodePosX = PosX;
 	SelectNode->NodePosY = PosY;
 	NodeCreator.Finalize();
+
+	// Default is 2 options; call AddInputPin() for each additional one needed
+	for (int32 i = 2; i < NumOptions; ++i)
+	{
+		if (SelectNode->CanAddPin())
+		{
+			SelectNode->AddInputPin();
+		}
+	}
 
 	// If a type was specified, set the option and return value pin types explicitly.
 	// Type will also resolve automatically when pins are connected.
