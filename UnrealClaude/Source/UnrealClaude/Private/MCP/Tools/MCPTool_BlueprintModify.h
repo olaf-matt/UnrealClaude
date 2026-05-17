@@ -182,7 +182,7 @@ private:
 		FString& OutError
 	);
 
-	void ProcessNodeConnections(
+	TArray<TSharedPtr<FJsonValue>> ProcessNodeConnections(
 		UEdGraph* Graph,
 		const TArray<TSharedPtr<FJsonValue>>& ConnectionsArray,
 		const TArray<FString>& CreatedNodeIds

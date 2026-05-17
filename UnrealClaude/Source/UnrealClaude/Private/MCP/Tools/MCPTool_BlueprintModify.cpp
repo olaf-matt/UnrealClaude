@@ -603,11 +603,12 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddNodes(const TSharedRef<FJsonO
 		return FMCPToolResult::Error(CreateError);
 	}
 
-	// Process connections using helper
+	// Process connections using helper — captures per-connection success/failure
+	TArray<TSharedPtr<FJsonValue>> ConnectionResults;
 	const TArray<TSharedPtr<FJsonValue>>* ConnectionsArray;
 	if (Params->TryGetArrayField(TEXT("connections"), ConnectionsArray))
 	{
-		ProcessNodeConnections(Graph, *ConnectionsArray, CreatedNodeIds);
+		ConnectionResults = ProcessNodeConnections(Graph, *ConnectionsArray, CreatedNodeIds);
 	}
 
 	// Compile and finalize
@@ -616,16 +617,38 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddNodes(const TSharedRef<FJsonO
 		return CompileError.GetValue();
 	}
 
+	// Count failed connections for the summary message
+	int32 FailedConnections = 0;
+	for (const TSharedPtr<FJsonValue>& ConnResult : ConnectionResults)
+	{
+		const TSharedPtr<FJsonObject>* ConnObj;
+		FString Status;
+		if (ConnResult->TryGetObject(ConnObj) && (*ConnObj)->TryGetStringField(TEXT("status"), Status) && Status == TEXT("failed"))
+		{
+			FailedConnections++;
+		}
+	}
+
 	// Build result
 	TSharedPtr<FJsonObject> ResultData = Context.BuildResultJson();
 	ResultData->SetStringField(TEXT("graph_name"), Graph->GetName());
 	ResultData->SetArrayField(TEXT("nodes"), CreatedNodes);
 	ResultData->SetNumberField(TEXT("node_count"), CreatedNodeIds.Num());
+	if (ConnectionResults.Num() > 0)
+	{
+		ResultData->SetArrayField(TEXT("connections"), ConnectionResults);
+		ResultData->SetNumberField(TEXT("connections_ok"), ConnectionResults.Num() - FailedConnections);
+		ResultData->SetNumberField(TEXT("connections_failed"), FailedConnections);
+	}
 
-	return FMCPToolResult::Success(
-		FString::Printf(TEXT("Created %d nodes"), CreatedNodeIds.Num()),
-		ResultData
-	);
+	FString Summary = FString::Printf(TEXT("Created %d nodes"), CreatedNodeIds.Num());
+	if (ConnectionResults.Num() > 0)
+	{
+		Summary += FString::Printf(TEXT(", %d/%d connections ok"),
+			ConnectionResults.Num() - FailedConnections, ConnectionResults.Num());
+	}
+
+	return FMCPToolResult::Success(Summary, ResultData);
 }
 
 bool FMCPTool_BlueprintModify::CreateNodesFromSpec(
@@ -712,16 +735,24 @@ bool FMCPTool_BlueprintModify::CreateNodesFromSpec(
 	return true;
 }
 
-void FMCPTool_BlueprintModify::ProcessNodeConnections(
+TArray<TSharedPtr<FJsonValue>> FMCPTool_BlueprintModify::ProcessNodeConnections(
 	UEdGraph* Graph,
 	const TArray<TSharedPtr<FJsonValue>>& ConnectionsArray,
 	const TArray<FString>& CreatedNodeIds)
 {
+	TArray<TSharedPtr<FJsonValue>> Results;
+
 	for (int32 i = 0; i < ConnectionsArray.Num(); i++)
 	{
+		TSharedPtr<FJsonObject> ConnResult = MakeShared<FJsonObject>();
+		ConnResult->SetNumberField(TEXT("index"), i);
+
 		const TSharedPtr<FJsonObject>* ConnSpec;
 		if (!ConnectionsArray[i]->TryGetObject(ConnSpec))
 		{
+			ConnResult->SetStringField(TEXT("status"), TEXT("failed"));
+			ConnResult->SetStringField(TEXT("error"), TEXT("Connection spec is not a valid object"));
+			Results.Add(MakeShared<FJsonValueObject>(ConnResult));
 			continue;
 		}
 
@@ -758,12 +789,33 @@ void FMCPTool_BlueprintModify::ProcessNodeConnections(
 		FString SourcePin = (*ConnSpec)->GetStringField(TEXT("from_pin"));
 		FString TargetPin = (*ConnSpec)->GetStringField(TEXT("to_pin"));
 
-		if (!SourceNodeId.IsEmpty() && !TargetNodeId.IsEmpty())
+		ConnResult->SetStringField(TEXT("from"), FString::Printf(TEXT("%s.%s"), *SourceNodeId, *SourcePin));
+		ConnResult->SetStringField(TEXT("to"), FString::Printf(TEXT("%s.%s"), *TargetNodeId, *TargetPin));
+
+		if (SourceNodeId.IsEmpty() || TargetNodeId.IsEmpty())
+		{
+			ConnResult->SetStringField(TEXT("status"), TEXT("failed"));
+			ConnResult->SetStringField(TEXT("error"), TEXT("Could not resolve from_node or to_node to a valid node ID"));
+		}
+		else
 		{
 			FString ConnectError;
-			FBlueprintUtils::ConnectPins(Graph, SourceNodeId, SourcePin, TargetNodeId, TargetPin, ConnectError);
+			bool bConnected = FBlueprintUtils::ConnectPins(Graph, SourceNodeId, SourcePin, TargetNodeId, TargetPin, ConnectError);
+			if (bConnected)
+			{
+				ConnResult->SetStringField(TEXT("status"), TEXT("ok"));
+			}
+			else
+			{
+				ConnResult->SetStringField(TEXT("status"), TEXT("failed"));
+				ConnResult->SetStringField(TEXT("error"), ConnectError);
+			}
 		}
+
+		Results.Add(MakeShared<FJsonValueObject>(ConnResult));
 	}
+
+	return Results;
 }
 
 FMCPToolResult FMCPTool_BlueprintModify::ExecuteDeleteNode(const TSharedRef<FJsonObject>& Params)
