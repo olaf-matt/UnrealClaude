@@ -336,9 +336,6 @@ bool FBlueprintGraphEditor::ConnectPins(
 		}
 	}
 
-	// TryCreateConnection calls PinConnectionListChanged() on both nodes, which is required
-	// for wildcard pins (e.g. KismetArrayLibrary) to propagate their resolved type.
-	// MakeLinkTo() alone bypasses that notification and leaves wildcards undetermined.
 	if (Schema)
 	{
 		Schema->TryCreateConnection(SourcePin, TargetPin);
@@ -346,6 +343,16 @@ bool FBlueprintGraphEditor::ConnectPins(
 	else
 	{
 		SourcePin->MakeLinkTo(TargetPin);
+	}
+
+	// TryCreateConnection fires PinConnectionListChanged() but for wildcard array functions
+	// (e.g. UKismetArrayLibrary::Array_Length) that alone doesn't resolve the wildcard type.
+	// Explicitly reconstruct both nodes so the compiler sees a concrete type.
+	if (SourcePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard ||
+		TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard)
+	{
+		SourceNode->ReconstructNode();
+		TargetNode->ReconstructNode();
 	}
 
 	UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
