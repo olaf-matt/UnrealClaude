@@ -6,6 +6,7 @@
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_CallArrayFunction.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
@@ -343,16 +344,6 @@ bool FBlueprintGraphEditor::ConnectPins(
 	else
 	{
 		SourcePin->MakeLinkTo(TargetPin);
-	}
-
-	// TryCreateConnection fires PinConnectionListChanged() but for wildcard array functions
-	// (e.g. UKismetArrayLibrary::Array_Length) that alone doesn't resolve the wildcard type.
-	// Explicitly reconstruct both nodes so the compiler sees a concrete type.
-	if (SourcePin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard ||
-		TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Wildcard)
-	{
-		SourceNode->ReconstructNode();
-		TargetNode->ReconstructNode();
 	}
 
 	UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
@@ -765,7 +756,19 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 		return nullptr;
 	}
 
-	// Create the node
+	// Functions with ArrayParm metadata (e.g. UKismetArrayLibrary) must use
+	// UK2Node_CallArrayFunction so NotifyPinConnectionListChanged propagates wildcard types.
+	if (!bIsSelfCall && Function && Function->HasMetaData(TEXT("ArrayParm")))
+	{
+		FGraphNodeCreator<UK2Node_CallArrayFunction> NodeCreator(*Graph);
+		UK2Node_CallArrayFunction* CallNode = NodeCreator.CreateNode();
+		CallNode->SetFromFunction(Function);
+		CallNode->NodePosX = PosX;
+		CallNode->NodePosY = PosY;
+		NodeCreator.Finalize();
+		return CallNode;
+	}
+
 	FGraphNodeCreator<UK2Node_CallFunction> NodeCreator(*Graph);
 	UK2Node_CallFunction* CallNode = NodeCreator.CreateNode();
 	if (bIsSelfCall)
