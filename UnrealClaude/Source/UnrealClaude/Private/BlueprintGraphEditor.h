@@ -105,6 +105,17 @@ public:
 	static bool DeleteNode(UEdGraph* Graph, const FString& NodeId, FString& OutError);
 
 	/**
+	 * Reposition a node without touching its connections
+	 * @param Graph - Graph containing node
+	 * @param NodeId - MCP-generated node ID or raw NodeGuid string
+	 * @param PosX - New X position in graph canvas
+	 * @param PosY - New Y position in graph canvas
+	 * @param OutError - Error message if failed
+	 * @return true if successful
+	 */
+	static bool MoveNode(UEdGraph* Graph, const FString& NodeId, int32 PosX, int32 PosY, FString& OutError);
+
+	/**
 	 * Find node by MCP-generated ID
 	 * @param Graph - Graph to search
 	 * @param NodeId - Node ID to find

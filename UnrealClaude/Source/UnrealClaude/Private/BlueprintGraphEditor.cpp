@@ -375,6 +375,34 @@ bool FBlueprintGraphEditor::DeleteNode(UEdGraph* Graph, const FString& NodeId, F
 	return true;
 }
 
+bool FBlueprintGraphEditor::MoveNode(UEdGraph* Graph, const FString& NodeId, int32 PosX, int32 PosY, FString& OutError)
+{
+	if (!Graph)
+	{
+		OutError = TEXT("Graph is null");
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeById(Graph, NodeId);
+	if (!Node)
+	{
+		OutError = FString::Printf(TEXT("Node '%s' not found"), *NodeId);
+		return false;
+	}
+
+	Node->NodePosX = PosX;
+	Node->NodePosY = PosY;
+
+	UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+	if (Blueprint)
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	}
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Moved node '%s' to (%d, %d)"), *NodeId, PosX, PosY);
+	return true;
+}
+
 UEdGraphNode* FBlueprintGraphEditor::FindNodeById(UEdGraph* Graph, const FString& NodeId)
 {
 	if (!Graph || NodeId.IsEmpty())

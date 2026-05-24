@@ -215,6 +215,11 @@ public:
 		return FBlueprintGraphEditor::DeleteNode(Graph, NodeId, OutError);
 	}
 
+	FORCEINLINE static bool MoveNode(UEdGraph* Graph, const FString& NodeId, int32 PosX, int32 PosY, FString& OutError)
+	{
+		return FBlueprintGraphEditor::MoveNode(Graph, NodeId, PosX, PosY, OutError);
+	}
+
 	FORCEINLINE static bool ConnectPins(
 		UEdGraph* Graph,
 		const FString& SourceNodeId,

@@ -19,6 +19,7 @@ namespace BlueprintModifyOps
 	static const FString AddNode = TEXT("add_node");
 	static const FString AddNodes = TEXT("add_nodes");
 	static const FString DeleteNode = TEXT("delete_node");
+	static const FString MoveNode = TEXT("move_node");
 	static const FString ConnectPins = TEXT("connect_pins");
 	static const FString DisconnectPins = TEXT("disconnect_pins");
 	static const FString SetPinValue = TEXT("set_pin_value");
@@ -74,6 +75,10 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	{
 		return ExecuteDeleteNode(Params);
 	}
+	if (Operation == BlueprintModifyOps::MoveNode)
+	{
+		return ExecuteMoveNode(Params);
+	}
 	// Level 4: Connection Operations
 	if (Operation == BlueprintModifyOps::ConnectPins)
 	{
@@ -89,7 +94,7 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, add_function, add_function_input, remove_function, add_node, add_nodes, delete_node, connect_pins, disconnect_pins, set_pin_value"),
+		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, add_function, add_function_input, remove_function, add_node, add_nodes, delete_node, move_node, connect_pins, disconnect_pins, set_pin_value"),
 		*Operation));
 }
 
@@ -872,6 +877,56 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteDeleteNode(const TSharedRef<FJso
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("Deleted node '%s'"), *NodeId),
+		ResultData
+	);
+}
+
+FMCPToolResult FMCPTool_BlueprintModify::ExecuteMoveNode(const TSharedRef<FJsonObject>& Params)
+{
+	TOptional<FMCPToolResult> Error;
+	FString NodeId;
+	if (!ExtractRequiredString(Params, TEXT("node_id"), NodeId, Error))
+	{
+		return Error.GetValue();
+	}
+
+	int32 PosX = (int32)ExtractOptionalNumber(Params, TEXT("pos_x"), 0);
+	int32 PosY = (int32)ExtractOptionalNumber(Params, TEXT("pos_y"), 0);
+	FString GraphName = ExtractOptionalString(Params, TEXT("graph_name"), TEXT(""));
+	bool bFunctionGraph = ExtractOptionalBool(Params, TEXT("is_function_graph"), false);
+
+	// Load and validate Blueprint
+	FMCPBlueprintLoadContext Context;
+	if (auto LoadError = Context.LoadAndValidate(Params))
+	{
+		return LoadError.GetValue();
+	}
+
+	// Find graph
+	FString GraphError;
+	UEdGraph* Graph = FBlueprintUtils::FindGraph(Context.Blueprint, GraphName, bFunctionGraph, GraphError);
+	if (!Graph)
+	{
+		return FMCPToolResult::Error(GraphError);
+	}
+
+	// Move the node
+	FString MoveError;
+	if (!FBlueprintUtils::MoveNode(Graph, NodeId, PosX, PosY, MoveError))
+	{
+		return FMCPToolResult::Error(MoveError);
+	}
+
+	// Build result (no compile needed — positional change only)
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("blueprint_path"), Context.Blueprint->GetPathName());
+	ResultData->SetStringField(TEXT("graph_name"), Graph->GetName());
+	ResultData->SetStringField(TEXT("node_id"), NodeId);
+	ResultData->SetNumberField(TEXT("pos_x"), PosX);
+	ResultData->SetNumberField(TEXT("pos_y"), PosY);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Moved node '%s' to (%d, %d)"), *NodeId, PosX, PosY),
 		ResultData
 	);
 }

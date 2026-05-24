@@ -20,6 +20,7 @@
  *   - add_node: Add a single node to a graph
  *   - add_nodes: Batch add multiple nodes with connections
  *   - delete_node: Remove a node from a graph
+ *   - move_node: Reposition a node without touching connections
  *
  * Level 4 Operations (Connections):
  *   - connect_pins: Connect two pins
@@ -47,6 +48,7 @@ public:
 			"  add_node        → blueprint_path, node_type [, graph_name, is_function_graph, node_params, pos_x, pos_y]\n"
 			"  add_nodes       → blueprint_path, nodes[] [, connections[], graph_name, is_function_graph]\n"
 			"  delete_node     → blueprint_path, node_id [, graph_name, is_function_graph]\n"
+			"  move_node       → blueprint_path, node_id, pos_x, pos_y [, graph_name, is_function_graph]\n"
 			"  connect_pins    → blueprint_path, source_node_id, target_node_id [, source_pin, target_pin, graph_name, is_function_graph]\n"
 			"  disconnect_pins → blueprint_path, source_node_id, source_pin, target_node_id, target_pin\n"
 			"  set_pin_value   → blueprint_path, node_id, pin_name, pin_value [, graph_name, is_function_graph]\n\n"
@@ -75,7 +77,7 @@ public:
 		Info.Parameters = {
 			// Operation selector
 			FMCPToolParameter(TEXT("operation"), TEXT("string"),
-				TEXT("create | add_variable | remove_variable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | connect_pins | disconnect_pins | set_pin_value"), true),
+				TEXT("create | add_variable | remove_variable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | move_node | connect_pins | disconnect_pins | set_pin_value"), true),
 
 			// Common parameters
 			FMCPToolParameter(TEXT("blueprint_path"), TEXT("string"),
@@ -164,6 +166,7 @@ private:
 	FMCPToolResult ExecuteAddNode(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddNodes(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteDeleteNode(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteMoveNode(const TSharedRef<FJsonObject>& Params);
 
 	// Level 4 Operations (Connections)
 	FMCPToolResult ExecuteConnectPins(const TSharedRef<FJsonObject>& Params);
