@@ -357,10 +357,14 @@ FString FClaudeCodeRunner::BuildCommandLine(const FClaudeRequestConfig& Config)
 			IFileManager::Get().MakeDirectory(*MCPConfigDir, true);
 
 			FString MCPConfigPath = FPaths::Combine(MCPConfigDir, TEXT("mcp-config.json"));
+			FString MCPToolLogPath = FPaths::ConvertRelativePathToFull(
+				FPaths::Combine(FPaths::ProjectDir(), TEXT("claude"), TEXT("mcp-tool-log.jsonl"))
+			).Replace(TEXT("\\"), TEXT("/"));
 			FString MCPConfigContent = FString::Printf(
-				TEXT("{\n  \"mcpServers\": {\n    \"unrealclaude\": {\n      \"command\": \"node\",\n      \"args\": [\"%s\"],\n      \"env\": {\n        \"UNREAL_MCP_URL\": \"http://localhost:%d\"\n      }\n    }\n  }\n}"),
+				TEXT("{\n  \"mcpServers\": {\n    \"unrealclaude\": {\n      \"command\": \"node\",\n      \"args\": [\"%s\"],\n      \"env\": {\n        \"UNREAL_MCP_URL\": \"http://localhost:%d\",\n        \"MCP_LOG_FILE\": \"%s\"\n      }\n    }\n  }\n}"),
 				*MCPBridgePath.Replace(TEXT("\\"), TEXT("/")),
-				UnrealClaudeConstants::MCPServer::DefaultPort
+				UnrealClaudeConstants::MCPServer::DefaultPort,
+				*MCPToolLogPath
 			);
 
 			if (FFileHelper::SaveStringToFile(MCPConfigContent, *MCPConfigPath))

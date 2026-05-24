@@ -173,8 +173,51 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 	{
 		FString FunctionName = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("function")) : TEXT("");
 		FString TargetClass = NodeParams.IsValid() ? NodeParams->GetStringField(TEXT("target_class")) : TEXT("");
+		FString TargetVariable;
+		if (NodeParams.IsValid()) NodeParams->TryGetStringField(TEXT("target_variable"), TargetVariable);
 		Context = FunctionName;
 		NewNode = CreateCallFunctionNode(Graph, FunctionName, TargetClass, PosX, PosY, OutError);
+
+		// Auto-wire a VariableGet for the instance target when target_variable is specified
+		if (NewNode && !TargetVariable.IsEmpty())
+		{
+			FString VarError;
+			UEdGraphNode* VarGetNode = CreateVariableGetNode(Graph, Blueprint, TargetVariable, PosX - 250, PosY + 100, VarError);
+			if (VarGetNode)
+			{
+				// Instance methods expose "self" as the Target pin
+				UEdGraphPin* TargetPin = FindPinByName(NewNode, TEXT("self"), EGPD_Input);
+				if (!TargetPin) TargetPin = FindPinByName(NewNode, TEXT("Target"), EGPD_Input);
+
+				if (TargetPin)
+				{
+					UEdGraphPin* VarOutPin = nullptr;
+					for (UEdGraphPin* Pin : VarGetNode->Pins)
+					{
+						if (Pin && Pin->Direction == EGPD_Output
+							&& Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+						{
+							VarOutPin = Pin;
+							break;
+						}
+					}
+					if (VarOutPin)
+					{
+						const UEdGraphSchema* Schema = Graph->GetSchema();
+						if (Schema)
+							Schema->TryCreateConnection(VarOutPin, TargetPin);
+						else
+							VarOutPin->MakeLinkTo(TargetPin);
+					}
+				}
+			}
+			else
+			{
+				UE_LOG(LogUnrealClaude, Warning,
+					TEXT("target_variable '%s' not found for CallFunction '%s': %s"),
+					*TargetVariable, *FunctionName, *VarError);
+			}
+		}
 	}
 	else if (NodeType.Equals(TEXT("Branch"), ESearchCase::IgnoreCase) || NodeType.Equals(TEXT("IfThenElse"), ESearchCase::IgnoreCase))
 	{
@@ -800,10 +843,11 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	// Try to find class by name
 	if (!TargetClass.IsEmpty())
 	{
-		FunctionOwner = FindObject<UClass>(nullptr, *TargetClass);
+		// First try the broad resolver (handles /Script/Engine, /Script/Niagara, etc.)
+		FunctionOwner = ResolveClassByName(TargetClass);
 		if (!FunctionOwner)
 		{
-			// Try common library classes
+			// Fallback aliases for common library shorthands
 			if (TargetClass.Equals(TEXT("KismetSystemLibrary"), ESearchCase::IgnoreCase))
 			{
 				FunctionOwner = UKismetSystemLibrary::StaticClass();
@@ -886,7 +930,8 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (!Function && !bIsSelfCall)
 	{
 		OutError = FString::Printf(
-			TEXT("Function '%s' not found in KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, GameplayStatics, or this Blueprint's own functions"),
+			TEXT("Function '%s' not found. Searched: KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, GameplayStatics, this Blueprint's own functions. "
+			     "For C++ instance methods supply target_class (e.g. 'MaterialInstanceDynamic', 'NiagaraComponent', 'ActorComponent')."),
 			*FunctionName);
 		return nullptr;
 	}

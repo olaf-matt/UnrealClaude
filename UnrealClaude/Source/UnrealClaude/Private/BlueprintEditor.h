@@ -26,7 +26,8 @@ struct FBlueprintFunctionParam
  * - Primitives: bool, int32, int64, float, double, byte, FString, FName, FText
  * - Structs: FVector, FRotator, FTransform, FLinearColor, FVector2D
  * - Containers: TArray<T>, TSet<T>
- * - Object references: AActor*, UTexture2D*, etc.
+ * - Object references: "Actor*", "MaterialInstanceDynamic*", or bare name "MaterialInstanceDynamic"
+ *   (any loaded C++ class — searches Engine, Niagara, UMG, and all loaded packages)
  */
 class FBlueprintEditor
 {
@@ -123,8 +124,9 @@ public:
 	 * Supported formats:
 	 * - Primitives: "bool", "int32", "float", "FString"
 	 * - Structs: "FVector", "FRotator", "FTransform"
-	 * - Arrays: "TArray<int32>", "TArray<FVector>"
-	 * - Objects: "AActor*", "UTexture2D*"
+	 * - Arrays: "TArray<int32>", "TArray<FVector>", "TArray<MaterialInstanceDynamic>"
+	 * - Objects: "Actor*", "MaterialInstanceDynamic*", or bare "MaterialInstanceDynamic"
+	 *   (searches Engine, Niagara, UMG, and all loaded packages)
 	 *
 	 * @param TypeString - Type name string
 	 * @param OutPinType - Output pin type

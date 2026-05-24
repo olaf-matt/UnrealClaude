@@ -66,7 +66,9 @@ public:
 	 * Create a Blueprint node in the specified graph
 	 *
 	 * Supported NodeTypes:
-	 * - "CallFunction" - params: { function, target_class }
+	 * - "CallFunction" - params: { function, target_class, target_variable (opt) }
+	 *                   target_class: short C++ class name (e.g. "MaterialInstanceDynamic", "NiagaraComponent")
+	 *                   target_variable: if set, auto-creates a VariableGet and wires it to the Target/self pin
 	 * - "Branch" / "IfThenElse"
 	 * - "Event" - params: { event: "BeginPlay"|"Tick"|"EndPlay" }
 	 * - "VariableGet" / "VariableSet" - params: { variable }
@@ -222,6 +224,14 @@ public:
 	 */
 	static FString GetNodeId(UEdGraphNode* Node);
 
+	/**
+	 * Resolve a short class name to a UClass*.
+	 * Searches /Script/Engine, /Script/Niagara, /Script/UMG, and all loaded packages.
+	 * Accepts names without the U prefix (e.g. "ExponentialHeightFogComponent", "MaterialInstanceDynamic").
+	 * Also shared by BlueprintEditor::ParsePinType for object-reference variable types.
+	 */
+	static UClass* ResolveClassByName(const FString& ClassName);
+
 private:
 	// Thread-safe counter for unique IDs
 	static volatile int32 NodeIdCounter;
@@ -239,9 +249,6 @@ private:
 	static UEdGraphNode* CreateBreakStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateForEachLoopNode(UEdGraph* Graph, bool bWithBreak, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateSelectNode(UEdGraph* Graph, const FString& TypeName, int32 NumOptions, int32 PosX, int32 PosY, FString& OutError);
-
-	/** Resolve a short class name (e.g. "ExponentialHeightFogComponent") to a UClass*. Searches /Script/Engine first, then all loaded packages. */
-	static UClass* ResolveClassByName(const FString& ClassName);
 
 	/** Resolve a short struct name (e.g. "Vector") to a UScriptStruct*. Handles FVector/FRotator/FTransform directly; falls back to object search. */
 	static UScriptStruct* ResolveStructByName(const FString& StructName);

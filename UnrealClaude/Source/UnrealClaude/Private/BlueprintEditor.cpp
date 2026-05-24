@@ -1,6 +1,7 @@
 // Copyright Natali Caggiano. All Rights Reserved.
 
 #include "BlueprintEditor.h"
+#include "BlueprintGraphEditor.h"
 #include "UnrealClaudeModule.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_FunctionEntry.h"
@@ -431,35 +432,36 @@ bool FBlueprintEditor::ParsePinType(
 		return true;
 	}
 
-	// Object references (with * suffix)
+	// Object references — explicit pointer suffix (e.g. "MaterialInstanceDynamic*")
 	if (CleanType.EndsWith(TEXT("*")))
 	{
 		FString ClassName = CleanType.LeftChop(1).TrimEnd();
-		UClass* Class = FindObject<UClass>(nullptr, *ClassName);
-
-		if (!Class)
-		{
-			Class = LoadClass<UObject>(nullptr,
-				*FString::Printf(TEXT("/Script/Engine.%s"), *ClassName));
-		}
-		if (!Class)
-		{
-			Class = LoadClass<UObject>(nullptr,
-				*FString::Printf(TEXT("/Script/CoreUObject.%s"), *ClassName));
-		}
-
+		UClass* Class = FBlueprintGraphEditor::ResolveClassByName(ClassName);
 		if (Class)
 		{
 			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
 			OutPinType.PinSubCategoryObject = Class;
 			return true;
 		}
-
-		OutError = FString::Printf(TEXT("Unknown class: %s"), *ClassName);
+		OutError = FString::Printf(
+			TEXT("Unknown class '%s'. Use the C++ name without U prefix (e.g. 'ExponentialHeightFogComponent' not 'UExponentialHeightFogComponent')."),
+			*ClassName);
 		return false;
 	}
 
-	OutError = FString::Printf(TEXT("Unknown type: %s"), *TypeString);
+	// Last-resort: try resolving as an object-reference class without the * suffix.
+	// Handles "MaterialInstanceDynamic", "NiagaraComponent", "SkeletalMeshComponent", etc.
+	{
+		UClass* Class = FBlueprintGraphEditor::ResolveClassByName(CleanType);
+		if (Class)
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+			OutPinType.PinSubCategoryObject = Class;
+			return true;
+		}
+	}
+
+	OutError = FString::Printf(TEXT("Unknown type: '%s'. Supported: bool, int, float, double, byte, FString, FName, FText, Vector, Rotator, Transform, LinearColor, TArray<T>, TSet<T>, or any C++ class name (with or without * suffix)."), *TypeString);
 	return false;
 }
 
