@@ -16,7 +16,7 @@
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_Select.h"
-#include "K2Node_GetSelf.h"
+#include "K2Node_Self.h"
 #include "EdGraphSchema_K2.h"
 #include "BlueprintEditor.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -1240,8 +1240,8 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableSetNode(
 
 UEdGraphNode* FBlueprintGraphEditor::CreateSelfNode(UEdGraph* Graph, int32 PosX, int32 PosY)
 {
-	FGraphNodeCreator<UK2Node_GetSelf> NodeCreator(*Graph);
-	UK2Node_GetSelf* SelfNode = NodeCreator.CreateNode();
+	FGraphNodeCreator<UK2Node_Self> NodeCreator(*Graph);
+	UK2Node_Self* SelfNode = NodeCreator.CreateNode();
 	SelfNode->NodePosX = PosX;
 	SelfNode->NodePosY = PosY;
 	NodeCreator.Finalize();
