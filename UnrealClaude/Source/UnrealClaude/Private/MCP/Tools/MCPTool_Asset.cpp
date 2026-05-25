@@ -13,6 +13,8 @@
 #include "UObject/PropertyAccessUtil.h"
 #include "Engine/SkeletalMesh.h"
 #include "Dom/JsonValue.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
 
 FMCPToolInfo FMCPTool_Asset::GetInfo() const
 {
@@ -22,7 +24,7 @@ FMCPToolInfo FMCPTool_Asset::GetInfo() const
 
 	// Parameters
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
-		TEXT("Operation: set_asset_property, save_asset, get_asset_info, list_assets"), true));
+		TEXT("Operation: set_asset_property, save_asset, get_asset_info, list_assets, duplicate"), true));
 
 	// Common params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("asset_path"), TEXT("string"),
@@ -53,6 +55,12 @@ FMCPToolInfo FMCPTool_Asset::GetInfo() const
 		TEXT("Search recursively (default: false)"), false));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("limit"), TEXT("integer"),
 		TEXT("Maximum results (1-1000, default: 25)"), false));
+
+	// duplicate params
+	Info.Parameters.Add(FMCPToolParameter(TEXT("source_path"), TEXT("string"),
+		TEXT("Full asset path of the asset to copy, e.g. /Game/03/Particles/FX_Syst_Readback_03"), false));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("dest_path"), TEXT("string"),
+		TEXT("Full destination asset path including new name, e.g. /Game/OceanWater/Particles/FX_Syst_Readback_iFFT"), false));
 
 	Info.Annotations = FMCPToolAnnotations::Modifying();
 
@@ -86,9 +94,13 @@ FMCPToolResult FMCPTool_Asset::Execute(const TSharedRef<FJsonObject>& Params)
 	{
 		return ExecuteListAssets(Params);
 	}
+	else if (Operation == TEXT("duplicate"))
+	{
+		return ExecuteDuplicate(Params);
+	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: %s. Valid: set_asset_property, save_asset, get_asset_info, list_assets"),
+		TEXT("Unknown operation: %s. Valid: set_asset_property, save_asset, get_asset_info, list_assets, duplicate"),
 		*Operation));
 }
 
@@ -767,4 +779,59 @@ TArray<TSharedPtr<FJsonValue>> FMCPTool_Asset::GetAssetProperties(UObject* Asset
 	}
 
 	return PropsArray;
+}
+
+FMCPToolResult FMCPTool_Asset::ExecuteDuplicate(const TSharedRef<FJsonObject>& Params)
+{
+	FString SourcePath;
+	FString DestPath;
+	TOptional<FMCPToolResult> Error;
+
+	if (!ExtractRequiredString(Params, TEXT("source_path"), SourcePath, Error))
+	{
+		return Error.GetValue();
+	}
+	if (!ExtractRequiredString(Params, TEXT("dest_path"), DestPath, Error))
+	{
+		return Error.GetValue();
+	}
+	if (!ValidateBlueprintPathParam(SourcePath, Error))
+	{
+		return Error.GetValue();
+	}
+	if (!ValidateBlueprintPathParam(DestPath, Error))
+	{
+		return Error.GetValue();
+	}
+
+	// Prevent overwriting an existing asset
+	if (UEditorAssetLibrary::DoesAssetExist(DestPath))
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Destination asset already exists: %s. Delete it first or choose a different dest_path."),
+			*DestPath));
+	}
+
+	// Perform the duplication — UEditorAssetLibrary::DuplicateAsset handles
+	// loading the source, creating the destination package, and saving.
+	UObject* NewAsset = UEditorAssetLibrary::DuplicateAsset(SourcePath, DestPath);
+	if (!NewAsset)
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Failed to duplicate '%s' to '%s'. "
+				 "Check that the source asset exists and the destination path is valid."),
+			*SourcePath, *DestPath));
+	}
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("source_path"), SourcePath);
+	ResultData->SetStringField(TEXT("dest_path"), DestPath);
+	ResultData->SetStringField(TEXT("new_asset_name"), NewAsset->GetName());
+	ResultData->SetStringField(TEXT("new_asset_class"), NewAsset->GetClass()->GetName());
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Duplicated '%s' → '%s'"),
+			*FPackageName::GetShortName(SourcePath),
+			*FPackageName::GetShortName(DestPath)),
+		ResultData);
 }

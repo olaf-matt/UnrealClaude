@@ -228,14 +228,18 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 		if (NodeParams.IsValid()) NodeParams->TryGetStringField(TEXT("target_object"), TargetObject);
 
 		static const TCHAR* SelfObjectFunctions[] = {
-			TEXT("SetTimerByFunctionName"),   TEXT("K2_SetTimerByFunctionName"),
-			TEXT("ClearTimer"),               TEXT("K2_ClearTimer"),
-			TEXT("PauseTimer"),               TEXT("K2_PauseTimer"),
-			TEXT("UnPauseTimer"),             TEXT("K2_UnPauseTimer"),
-			TEXT("IsTimerActive"),            TEXT("K2_IsTimerActive"),
-			TEXT("IsTimerPaused"),            TEXT("K2_IsTimerPaused"),
-			TEXT("GetTimerElapsedTime"),      TEXT("K2_GetTimerElapsedTime"),
-			TEXT("GetTimerRemainingTime"),    TEXT("K2_GetTimerRemainingTime"),
+			// "Set Timer by Function Name" — actual UFUNCTION is K2_SetTimer
+			TEXT("K2_SetTimer"),
+			// "Set Timer for Next Tick by Function Name"
+			TEXT("K2_SetTimerForNextTick"),
+			TEXT("K2_ClearTimer"),
+			TEXT("K2_PauseTimer"),
+			TEXT("K2_UnPauseTimer"),
+			TEXT("K2_IsTimerActive"),
+			TEXT("K2_IsTimerPaused"),
+			TEXT("K2_TimerExists"),
+			TEXT("K2_GetTimerElapsedTime"),
+			TEXT("K2_GetTimerRemainingTime"),
 			nullptr
 		};
 		bool bWireSelfToObject = TargetObject.Equals(TEXT("self"), ESearchCase::IgnoreCase);

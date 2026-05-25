@@ -61,7 +61,9 @@ public class UnrealClaude : ModuleRules
 				// Asset saving
 				"EditorScriptingUtilities",
 				// Enhanced Input
-				"EnhancedInput"
+				"EnhancedInput",
+				// Niagara (for niagara_query tool — UNiagaraSystem, FNiagaraParameterStore)
+				"Niagara"
 			}
 		);
 
