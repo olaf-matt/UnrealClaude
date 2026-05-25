@@ -63,7 +63,11 @@ public class UnrealClaude : ModuleRules
 				// Enhanced Input
 				"EnhancedInput",
 				// Niagara (for niagara_query tool — UNiagaraSystem, FNiagaraParameterStore)
-				"Niagara"
+				"Niagara",
+				// RHI + RenderCore (for sample_render_target_2d_array —
+				// FRHITexture, FReadSurfaceDataFlags, ENQUEUE_RENDER_COMMAND, FlushRenderingCommands)
+				"RHI",
+				"RenderCore"
 			}
 		);
 

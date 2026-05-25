@@ -31,6 +31,7 @@
 #include "Tools/MCPTool_Asset.h"
 #include "Tools/MCPTool_OpenLevel.h"
 #include "Tools/MCPTool_NiagaraQuery.h"
+#include "Tools/MCPTool_SampleRenderTarget.h"
 
 // Task queue tools
 #include "Tools/MCPTool_TaskSubmit.h"
@@ -113,6 +114,9 @@ void FMCPToolRegistry::RegisterBuiltinTools()
 
 	// Niagara tools
 	RegisterTool(MakeShared<FMCPTool_NiagaraQuery>());
+
+	// Render target tools
+	RegisterTool(MakeShared<FMCPTool_SampleRenderTarget>());
 
 	// Create and register async task queue tools
 	// Task queue takes a raw pointer since the registry always outlives it
