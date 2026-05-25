@@ -12,6 +12,7 @@
  *   - create: Create a new Blueprint
  *   - add_variable: Add a variable to a Blueprint
  *   - remove_variable: Remove a variable from a Blueprint
+ *   - set_variable_instance_editable: Enable/disable Instance Editable flag on a variable
  *   - add_function: Add an empty function to a Blueprint
  *   - add_function_input: Add an input pin to an existing function (Interface blueprints only)
  *   - remove_function: Remove a function from a Blueprint
@@ -39,10 +40,11 @@ public:
 		Info.Description = TEXT(
 			"Create and modify Blueprints programmatically. Auto-compiles after each operation.\n\n"
 			"OPERATION → REQUIRED PARAMS:\n"
-			"  create             → package_path, blueprint_name, parent_class\n"
-			"  add_variable       → blueprint_path, variable_name, variable_type\n"
-			"  remove_variable    → blueprint_path, variable_name\n"
-			"  add_function       → blueprint_path, function_name [, inputs]\n"
+			"  create                       → package_path, blueprint_name, parent_class\n"
+			"  add_variable                 → blueprint_path, variable_name, variable_type\n"
+			"  remove_variable              → blueprint_path, variable_name\n"
+			"  set_variable_instance_editable → blueprint_path, variable_name, instance_editable\n"
+			"  add_function                 → blueprint_path, function_name [, inputs]\n"
 			"  add_function_input → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
 			"  remove_function    → blueprint_path, function_name\n"
 			"  add_node        → blueprint_path, node_type [, graph_name, is_function_graph, node_params, pos_x, pos_y]\n"
@@ -79,7 +81,7 @@ public:
 		Info.Parameters = {
 			// Operation selector
 			FMCPToolParameter(TEXT("operation"), TEXT("string"),
-				TEXT("create | add_variable | remove_variable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | move_node | connect_pins | disconnect_pins | set_pin_value"), true),
+				TEXT("create | add_variable | remove_variable | set_variable_instance_editable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | move_node | connect_pins | disconnect_pins | set_pin_value"), true),
 
 			// Common parameters
 			FMCPToolParameter(TEXT("blueprint_path"), TEXT("string"),
@@ -100,6 +102,8 @@ public:
 				TEXT("Variable name. Required for add_variable / remove_variable."), false),
 			FMCPToolParameter(TEXT("variable_type"), TEXT("string"),
 				TEXT("Supported types: bool | int | float | byte | string | Vector | Rotator | Transform. Object reference types (Actor, Component, etc.) are NOT supported — add those manually in the editor."), false),
+			FMCPToolParameter(TEXT("instance_editable"), TEXT("boolean"),
+				TEXT("For set_variable_instance_editable: true to enable Instance Editable (required before set_property works on level instances), false to disable."), false, TEXT("true")),
 
 			// For function operations
 			FMCPToolParameter(TEXT("function_name"), TEXT("string"),
@@ -160,6 +164,7 @@ private:
 	FMCPToolResult ExecuteCreate(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddVariable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveVariable(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetVariableInstanceEditable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddFunction(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddFunctionInput(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveFunction(const TSharedRef<FJsonObject>& Params);

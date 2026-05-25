@@ -87,6 +87,46 @@ bool FBlueprintEditor::RemoveVariable(
 	return true;
 }
 
+bool FBlueprintEditor::SetVariableInstanceEditable(
+	UBlueprint* Blueprint,
+	const FString& VariableName,
+	bool bInstanceEditable,
+	FString& OutError)
+{
+	if (!Blueprint)
+	{
+		OutError = TEXT("Blueprint is null");
+		return false;
+	}
+
+	FName VarName(*VariableName);
+
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		OutError = FString::Printf(TEXT("Variable '%s' not found"), *VariableName);
+		return false;
+	}
+
+	// SetBlueprintOnlyEditableFlag(false) removes CPF_DisableEditOnInstance → Instance Editable ON
+	// SetBlueprintOnlyEditableFlag(true)  adds    CPF_DisableEditOnInstance → Instance Editable OFF
+	FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, VarName, !bInstanceEditable);
+
+	UE_LOG(LogUnrealClaude, Log,
+		TEXT("Set variable '%s' instance_editable=%s on Blueprint '%s'"),
+		*VariableName, bInstanceEditable ? TEXT("true") : TEXT("false"), *Blueprint->GetName());
+	return true;
+}
+
 // ===== Function Management =====
 
 bool FBlueprintEditor::AddFunction(

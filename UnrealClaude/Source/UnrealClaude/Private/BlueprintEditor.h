@@ -62,6 +62,24 @@ public:
 		FString& OutError
 	);
 
+	/**
+	 * Set or clear the Instance Editable flag on a Blueprint variable.
+	 * When bInstanceEditable=true the variable appears in the Details panel for level instances
+	 * and its value is serialized per-instance. When false (the default for new variables),
+	 * set_property calls on level instances are silently discarded.
+	 * @param Blueprint       - Blueprint to modify
+	 * @param VariableName    - Name of the variable
+	 * @param bInstanceEditable - true to enable, false to disable
+	 * @param OutError        - Error message if failed
+	 * @return true if successful
+	 */
+	static bool SetVariableInstanceEditable(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		bool bInstanceEditable,
+		FString& OutError
+	);
+
 	// ===== Function Management =====
 
 	/**

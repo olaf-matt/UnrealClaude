@@ -107,6 +107,15 @@ public:
 		return FBlueprintEditor::RemoveVariable(Blueprint, VariableName, OutError);
 	}
 
+	FORCEINLINE static bool SetVariableInstanceEditable(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		bool bInstanceEditable,
+		FString& OutError)
+	{
+		return FBlueprintEditor::SetVariableInstanceEditable(Blueprint, VariableName, bInstanceEditable, OutError);
+	}
+
 	FORCEINLINE static bool ParsePinType(
 		const FString& TypeString,
 		FEdGraphPinType& OutPinType,

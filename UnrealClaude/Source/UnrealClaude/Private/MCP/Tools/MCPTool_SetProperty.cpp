@@ -465,6 +465,26 @@ bool FMCPTool_SetProperty::SetPropertyFromJson(UObject* Object, const FString& P
 		return false;
 	}
 
+	// Detect Blueprint variables where "Instance Editable" is OFF.
+	// CPF_DisableEditOnInstance is set on those variables. Writing via reflection succeeds at
+	// the memory level but the value is never serialized to the level package — the change
+	// appears successful but is silently discarded on save/reload.
+	// Scope the check to properties declared by Blueprint-generated classes so that C++
+	// EditDefaultsOnly properties (which carry the same flag) are not affected.
+	if (Property->HasAnyPropertyFlags(CPF_DisableEditOnInstance))
+	{
+		UClass* PropertyOwnerClass = Property->GetOwner<UClass>();
+		if (PropertyOwnerClass && PropertyOwnerClass->ClassGeneratedBy != nullptr)
+		{
+			OutError = FString::Printf(
+				TEXT("Property '%s' is not instance-editable on '%s'. "
+				     "Enable 'Instance Editable' in the Blueprint editor, "
+				     "or use blueprint_modify 'set_variable_instance_editable' to enable it via MCP."),
+				*PropertyPath, *PropertyOwnerClass->GetName());
+			return false;
+		}
+	}
+
 	// Get property address and set value based on type
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(TargetObject);
 	bool bPropertySet = false;

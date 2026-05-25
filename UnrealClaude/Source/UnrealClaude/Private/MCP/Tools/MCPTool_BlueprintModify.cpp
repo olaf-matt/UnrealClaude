@@ -13,6 +13,7 @@ namespace BlueprintModifyOps
 	static const FString Create = TEXT("create");
 	static const FString AddVariable = TEXT("add_variable");
 	static const FString RemoveVariable = TEXT("remove_variable");
+	static const FString SetVariableInstanceEditable = TEXT("set_variable_instance_editable");
 	static const FString AddFunction = TEXT("add_function");
 	static const FString AddFunctionInput = TEXT("add_function_input");
 	static const FString RemoveFunction = TEXT("remove_function");
@@ -49,6 +50,10 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	if (Operation == BlueprintModifyOps::RemoveVariable)
 	{
 		return ExecuteRemoveVariable(Params);
+	}
+	if (Operation == BlueprintModifyOps::SetVariableInstanceEditable)
+	{
+		return ExecuteSetVariableInstanceEditable(Params);
 	}
 	if (Operation == BlueprintModifyOps::AddFunction)
 	{
@@ -94,7 +99,7 @@ FMCPToolResult FMCPTool_BlueprintModify::Execute(const TSharedRef<FJsonObject>& 
 	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, add_function, add_function_input, remove_function, add_node, add_nodes, delete_node, move_node, connect_pins, disconnect_pins, set_pin_value"),
+		TEXT("Unknown operation: '%s'. Valid: create, add_variable, remove_variable, set_variable_instance_editable, add_function, add_function_input, remove_function, add_node, add_nodes, delete_node, move_node, connect_pins, disconnect_pins, set_pin_value"),
 		*Operation));
 }
 
@@ -273,6 +278,49 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteRemoveVariable(const TSharedRef<
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("Removed variable '%s' from Blueprint"), *VariableName),
+		ResultData
+	);
+}
+
+FMCPToolResult FMCPTool_BlueprintModify::ExecuteSetVariableInstanceEditable(const TSharedRef<FJsonObject>& Params)
+{
+	TOptional<FMCPToolResult> Error;
+	FString VariableName;
+	if (!ExtractRequiredString(Params, TEXT("variable_name"), VariableName, Error))
+	{
+		return Error.GetValue();
+	}
+
+	bool bInstanceEditable = ExtractOptionalBool(Params, TEXT("instance_editable"), true);
+
+	// Load and validate Blueprint
+	FMCPBlueprintLoadContext Context;
+	if (auto LoadError = Context.LoadAndValidate(Params))
+	{
+		return LoadError.GetValue();
+	}
+
+	FString SetError;
+	if (!FBlueprintUtils::SetVariableInstanceEditable(Context.Blueprint, VariableName, bInstanceEditable, SetError))
+	{
+		return FMCPToolResult::Error(SetError);
+	}
+
+	// Compile and finalize
+	if (auto CompileError = Context.CompileAndFinalize(TEXT("Instance Editable flag updated")))
+	{
+		return CompileError.GetValue();
+	}
+
+	TSharedPtr<FJsonObject> ResultData = Context.BuildResultJson();
+	ResultData->SetStringField(TEXT("variable_name"), VariableName);
+	ResultData->SetBoolField(TEXT("instance_editable"), bInstanceEditable);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Variable '%s' instance_editable=%s on '%s'"),
+			*VariableName,
+			bInstanceEditable ? TEXT("true") : TEXT("false"),
+			*Context.Blueprint->GetName()),
 		ResultData
 	);
 }
