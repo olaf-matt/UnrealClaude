@@ -260,6 +260,7 @@ private:
 	static UEdGraphNode* CreateBreakStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateForEachLoopNode(UEdGraph* Graph, bool bWithBreak, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateSelectNode(UEdGraph* Graph, const FString& TypeName, int32 NumOptions, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateSelfNode(UEdGraph* Graph, int32 PosX, int32 PosY);
 
 	/** Resolve a short struct name (e.g. "Vector") to a UScriptStruct*. Handles FVector/FRotator/FTransform directly; falls back to object search. */
 	static UScriptStruct* ResolveStructByName(const FString& StructName);

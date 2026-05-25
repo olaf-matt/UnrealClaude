@@ -55,6 +55,8 @@ public:
 			"NODE TYPES and node_params:\n"
 			"  CallFunction  {\"function\":\"MyFunc\"}                               self-call\n"
 			"                {\"function\":\"GetAllActorsOfClass\",\"target_class\":\"GameplayStatics\"}  library call\n"
+			"                {\"function\":\"SetTimerByFunctionName\"}               Object pin auto-wired to self\n"
+			"                {\"function\":\"MyFunc\",\"target_object\":\"self\"}      explicit self Object pin for any function\n"
 			"  VariableGet   {\"variable\":\"MyVar\"}\n"
 			"  VariableSet   {\"variable\":\"MyVar\"}\n"
 			"  Event         {\"event\":\"BeginPlay\"}   or  {\"event\":\"Tick\"}\n"

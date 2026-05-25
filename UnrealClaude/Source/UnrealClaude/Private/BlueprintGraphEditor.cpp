@@ -16,6 +16,7 @@
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_Select.h"
+#include "K2Node_GetSelf.h"
 #include "EdGraphSchema_K2.h"
 #include "BlueprintEditor.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -216,6 +217,73 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 				UE_LOG(LogUnrealClaude, Warning,
 					TEXT("target_variable '%s' not found for CallFunction '%s': %s"),
 					*TargetVariable, *FunctionName, *VarError);
+			}
+		}
+
+		// Auto-wire a GetSelf node to the Object pin for timer functions or
+		// when the caller explicitly requests it via target_object:"self".
+		// Covers SetTimerByFunctionName and the other KismetSystemLibrary timer ops
+		// that require an Object context to locate the named function.
+		FString TargetObject;
+		if (NodeParams.IsValid()) NodeParams->TryGetStringField(TEXT("target_object"), TargetObject);
+
+		static const TCHAR* SelfObjectFunctions[] = {
+			TEXT("SetTimerByFunctionName"),   TEXT("K2_SetTimerByFunctionName"),
+			TEXT("ClearTimer"),               TEXT("K2_ClearTimer"),
+			TEXT("PauseTimer"),               TEXT("K2_PauseTimer"),
+			TEXT("UnPauseTimer"),             TEXT("K2_UnPauseTimer"),
+			TEXT("IsTimerActive"),            TEXT("K2_IsTimerActive"),
+			TEXT("IsTimerPaused"),            TEXT("K2_IsTimerPaused"),
+			TEXT("GetTimerElapsedTime"),      TEXT("K2_GetTimerElapsedTime"),
+			TEXT("GetTimerRemainingTime"),    TEXT("K2_GetTimerRemainingTime"),
+			nullptr
+		};
+		bool bWireSelfToObject = TargetObject.Equals(TEXT("self"), ESearchCase::IgnoreCase);
+		if (!bWireSelfToObject)
+		{
+			for (int32 i = 0; SelfObjectFunctions[i]; ++i)
+			{
+				if (FunctionName.Equals(SelfObjectFunctions[i], ESearchCase::IgnoreCase))
+				{
+					bWireSelfToObject = true;
+					break;
+				}
+			}
+		}
+
+		if (NewNode && bWireSelfToObject)
+		{
+			UEdGraphNode* SelfNode = CreateSelfNode(Graph, PosX - 200, PosY + 120);
+			if (SelfNode)
+			{
+				UEdGraphPin* SelfOutPin = nullptr;
+				for (UEdGraphPin* Pin : SelfNode->Pins)
+				{
+					if (Pin && Pin->Direction == EGPD_Output
+						&& Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+					{
+						SelfOutPin = Pin;
+						break;
+					}
+				}
+
+				UEdGraphPin* ObjectPin = FindPinByName(NewNode, TEXT("Object"), EGPD_Input);
+				if (!ObjectPin) ObjectPin = FindPinByName(NewNode, TEXT("object"), EGPD_Input);
+
+				if (SelfOutPin && ObjectPin)
+				{
+					const UEdGraphSchema* Schema = Graph->GetSchema();
+					if (Schema)
+						Schema->TryCreateConnection(SelfOutPin, ObjectPin);
+					else
+						SelfOutPin->MakeLinkTo(ObjectPin);
+				}
+				else
+				{
+					UE_LOG(LogUnrealClaude, Warning,
+						TEXT("target_object:'self' — Object pin not found on '%s' (tried 'Object', 'object')"),
+						*FunctionName);
+				}
 			}
 		}
 	}
@@ -1168,6 +1236,16 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableSetNode(
 	NodeCreator.Finalize();
 
 	return SetNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateSelfNode(UEdGraph* Graph, int32 PosX, int32 PosY)
+{
+	FGraphNodeCreator<UK2Node_GetSelf> NodeCreator(*Graph);
+	UK2Node_GetSelf* SelfNode = NodeCreator.CreateNode();
+	SelfNode->NodePosX = PosX;
+	SelfNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+	return SelfNode;
 }
 
 UEdGraphNode* FBlueprintGraphEditor::CreateSequenceNode(
