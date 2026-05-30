@@ -265,6 +265,11 @@ private:
 	/** Resolve a short struct name (e.g. "Vector") to a UScriptStruct*. Handles FVector/FRotator/FTransform directly; falls back to object search. */
 	static UScriptStruct* ResolveStructByName(const FString& StructName);
 
+	/** Find a UBlueprintGeneratedClass by short Blueprint asset name (e.g. "BP_WeatherSystem").
+	 *  Searches the Asset Registry across all Blueprint-derived assets.
+	 *  Returns the GeneratedClass if found and compiled, nullptr otherwise. */
+	static UClass* ResolveBlueprintClassByName(const FString& ShortName);
+
 	// ID prefix for node comments
 	static const FString NodeIdPrefix;
 };

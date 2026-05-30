@@ -62,8 +62,11 @@ public class UnrealClaude : ModuleRules
 				"EditorScriptingUtilities",
 				// Enhanced Input
 				"EnhancedInput",
-				// Niagara (for niagara_query tool — UNiagaraSystem, FNiagaraParameterStore)
+				// Niagara runtime (niagara_query — UNiagaraSystem, FNiagaraParameterStore)
 				"Niagara",
+				// Niagara editor (niagara_modify — UNiagaraGraph, UNiagaraNodeFunctionCall,
+				// UNiagaraScriptSource, UNiagaraNodeOutput, FNiagaraEditorUtilities)
+				"NiagaraEditor",
 				// RHI + RenderCore (for sample_render_target_2d_array —
 				// FRHITexture, FReadSurfaceDataFlags, ENQUEUE_RENDER_COMMAND, FlushRenderingCommands)
 				"RHI",

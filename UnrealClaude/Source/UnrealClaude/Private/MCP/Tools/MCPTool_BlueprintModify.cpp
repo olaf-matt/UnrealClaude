@@ -6,6 +6,7 @@
 #include "MCP/MCPBlueprintLoadContext.h"
 #include "UnrealClaudeModule.h"
 #include "Engine/Blueprint.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 
 // Operation name constants
 namespace BlueprintModifyOps
@@ -218,11 +219,23 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddVariable(const TSharedRef<FJs
 		return FMCPToolResult::Error(TypeError);
 	}
 
+	// Extract optional category (default: keep "Default")
+	FString Category = ExtractOptionalString(Params, TEXT("category"), TEXT(""));
+
 	// Add the variable
 	FString AddError;
 	if (!FBlueprintUtils::AddVariable(Context.Blueprint, VariableName, PinType, AddError))
 	{
 		return FMCPToolResult::Error(AddError);
+	}
+
+	// Assign category if provided
+	if (!Category.IsEmpty())
+	{
+		// bDontRecompile=true: we compile below in CompileAndFinalize
+		FBlueprintEditorUtils::SetBlueprintVariableCategory(
+			Context.Blueprint, FName(*VariableName), nullptr,
+			FText::FromString(Category), /*bDontRecompile=*/true);
 	}
 
 	// Compile and finalize
@@ -235,6 +248,10 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddVariable(const TSharedRef<FJs
 	TSharedPtr<FJsonObject> ResultData = Context.BuildResultJson();
 	ResultData->SetStringField(TEXT("variable_name"), VariableName);
 	ResultData->SetStringField(TEXT("variable_type"), VariableType);
+	if (!Category.IsEmpty())
+	{
+		ResultData->SetStringField(TEXT("category"), Category);
+	}
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("Added variable '%s' (%s) to Blueprint"), *VariableName, *VariableType),
@@ -567,6 +584,23 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddNode(const TSharedRef<FJsonOb
 		return LoadError.GetValue();
 	}
 
+	// TODO-05: Ensure Blueprint is compiled before function-graph node operations.
+	// Some manually-authored function graphs (e.g. BP_DynamicSky.SetSkyParams) have
+	// uninitialised schema or stale GeneratedClass if the BP hasn't been compiled yet
+	// in this editor session. Force a compile so graph schemas are fully initialised.
+	if (bFunctionGraph && Context.Blueprint->Status != BS_UpToDate
+	    && Context.Blueprint->Status != BS_UpToDateWithWarnings)
+	{
+		FString CompileErr;
+		FBlueprintUtils::CompileBlueprint(Context.Blueprint, CompileErr);
+		// Non-fatal — proceed even if compile reports warnings; only abort on hard errors
+		if (Context.Blueprint->Status == BS_Error)
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Blueprint has compile errors — fix before adding nodes. %s"), *CompileErr));
+		}
+	}
+
 	// Find graph
 	FString GraphError;
 	UEdGraph* Graph = FBlueprintUtils::FindGraph(Context.Blueprint, GraphName, bFunctionGraph, GraphError);
@@ -637,6 +671,19 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteAddNodes(const TSharedRef<FJsonO
 	if (auto LoadError = Context.LoadAndValidate(Params))
 	{
 		return LoadError.GetValue();
+	}
+
+	// TODO-05: Pre-compile for function graphs (same as ExecuteAddNode)
+	if (bFunctionGraph && Context.Blueprint->Status != BS_UpToDate
+	    && Context.Blueprint->Status != BS_UpToDateWithWarnings)
+	{
+		FString CompileErr;
+		FBlueprintUtils::CompileBlueprint(Context.Blueprint, CompileErr);
+		if (Context.Blueprint->Status == BS_Error)
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Blueprint has compile errors — fix before adding nodes. %s"), *CompileErr));
+		}
 	}
 
 	// Find graph
@@ -1007,6 +1054,19 @@ FMCPToolResult FMCPTool_BlueprintModify::ExecuteConnectPins(const TSharedRef<FJs
 	if (auto LoadError = Context.LoadAndValidate(Params))
 	{
 		return LoadError.GetValue();
+	}
+
+	// TODO-05: Pre-compile for function graphs (same as ExecuteAddNode)
+	if (bFunctionGraph && Context.Blueprint->Status != BS_UpToDate
+	    && Context.Blueprint->Status != BS_UpToDateWithWarnings)
+	{
+		FString CompileErr;
+		FBlueprintUtils::CompileBlueprint(Context.Blueprint, CompileErr);
+		if (Context.Blueprint->Status == BS_Error)
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Blueprint has compile errors — fix before connecting pins. %s"), *CompileErr));
+		}
 	}
 
 	// Find graph

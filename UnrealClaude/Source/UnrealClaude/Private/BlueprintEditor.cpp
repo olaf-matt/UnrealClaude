@@ -314,11 +314,10 @@ bool FBlueprintEditor::AddFunctionInput(
 		}
 	}
 
-	// Interface function entry nodes must be editable for the signature to accept changes
-	if (Blueprint->BlueprintType == BPTYPE_Interface)
-	{
-		EntryNode->bIsEditable = true;
-	}
+	// The entry node must be editable so the function signature accepts new pins.
+	// This is required for both Interface and regular Blueprint functions —
+	// without it, ReconstructNode ignores UserDefinedPins on non-interface BPs.
+	EntryNode->bIsEditable = true;
 
 	TSharedPtr<FUserPinInfo> PinInfo = MakeShared<FUserPinInfo>();
 	PinInfo->PinName = FName(*InputName);
@@ -326,6 +325,9 @@ bool FBlueprintEditor::AddFunctionInput(
 	PinInfo->DesiredPinDirection = EGPD_Output;
 	EntryNode->UserDefinedPins.Add(PinInfo);
 	EntryNode->ReconstructNode();
+
+	// Structural modification needed so the compiler picks up the new function signature
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	UE_LOG(LogUnrealClaude, Log, TEXT("Added input '%s' to function '%s' on Blueprint '%s'"),
 		*InputName, *FunctionName, *Blueprint->GetName());

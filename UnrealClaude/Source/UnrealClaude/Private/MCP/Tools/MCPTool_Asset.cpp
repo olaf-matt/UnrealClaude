@@ -16,15 +16,23 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 
+// TODO-06: UserDefinedEnum and UserDefinedStruct creation
+#include "Engine/UserDefinedEnum.h"
+#include "Engine/UserDefinedStruct.h"
+#include "UserDefinedStructure/UserDefinedStructEditorData.h"  // FStructVariableDescription full definition
+#include "Kismet2/EnumEditorUtils.h"
+#include "Kismet2/StructureEditorUtils.h"
+#include "BlueprintEditor.h"
+
 FMCPToolInfo FMCPTool_Asset::GetInfo() const
 {
 	FMCPToolInfo Info;
 	Info.Name = TEXT("asset");
-	Info.Description = TEXT("Generic asset operations: set properties, save, and query assets in Content Browser");
+	Info.Description = TEXT("Generic asset operations: set properties, save, query assets, create enums/structs");
 
 	// Parameters
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
-		TEXT("Operation: set_asset_property, save_asset, get_asset_info, list_assets, duplicate"), true));
+		TEXT("Operation: set_asset_property, save_asset, get_asset_info, list_assets, duplicate, create_enum, create_struct"), true));
 
 	// Common params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("asset_path"), TEXT("string"),
@@ -62,6 +70,22 @@ FMCPToolInfo FMCPTool_Asset::GetInfo() const
 	Info.Parameters.Add(FMCPToolParameter(TEXT("dest_path"), TEXT("string"),
 		TEXT("Full destination asset path including new name, e.g. /Game/OceanWater/Particles/FX_Syst_Readback_iFFT"), false));
 
+	// create_enum params
+	Info.Parameters.Add(FMCPToolParameter(TEXT("enum_name"), TEXT("string"),
+		TEXT("Name for the new UUserDefinedEnum asset (e.g. E_WeatherState)"), false));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("values"), TEXT("array"),
+		TEXT("Optional list of enumerator names (strings), e.g. [\"Clear\",\"Rainy\",\"Storm\"]"), false));
+
+	// create_struct params
+	Info.Parameters.Add(FMCPToolParameter(TEXT("struct_name"), TEXT("string"),
+		TEXT("Name for the new UUserDefinedStruct asset (e.g. FS_WaveData)"), false));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("fields"), TEXT("array"),
+		TEXT("Optional list of {name, type} objects, e.g. [{\"name\":\"Speed\",\"type\":\"float\"}]"), false));
+
+	// shared for create_enum / create_struct
+	Info.Parameters.Add(FMCPToolParameter(TEXT("package_path"), TEXT("string"),
+		TEXT("Content Browser folder for new enum/struct asset, e.g. /Game/Blueprints/Enums"), false));
+
 	Info.Annotations = FMCPToolAnnotations::Modifying();
 
 	return Info;
@@ -98,9 +122,17 @@ FMCPToolResult FMCPTool_Asset::Execute(const TSharedRef<FJsonObject>& Params)
 	{
 		return ExecuteDuplicate(Params);
 	}
+	else if (Operation == TEXT("create_enum"))
+	{
+		return ExecuteCreateEnum(Params);
+	}
+	else if (Operation == TEXT("create_struct"))
+	{
+		return ExecuteCreateStruct(Params);
+	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: %s. Valid: set_asset_property, save_asset, get_asset_info, list_assets, duplicate"),
+		TEXT("Unknown operation: %s. Valid: set_asset_property, save_asset, get_asset_info, list_assets, duplicate, create_enum, create_struct"),
 		*Operation));
 }
 
@@ -834,4 +866,228 @@ FMCPToolResult FMCPTool_Asset::ExecuteDuplicate(const TSharedRef<FJsonObject>& P
 			*FPackageName::GetShortName(SourcePath),
 			*FPackageName::GetShortName(DestPath)),
 		ResultData);
+}
+
+// ===== TODO-06: UserDefinedEnum creation =====
+
+FMCPToolResult FMCPTool_Asset::ExecuteCreateEnum(const TSharedRef<FJsonObject>& Params)
+{
+	TOptional<FMCPToolResult> Error;
+	FString EnumName, PackagePath;
+	if (!ExtractRequiredString(Params, TEXT("enum_name"), EnumName, Error))
+		return Error.GetValue();
+	if (!ExtractRequiredString(Params, TEXT("package_path"), PackagePath, Error))
+		return Error.GetValue();
+
+	// Normalise path: strip trailing slash only — preserve the leading '/' required by UE
+	PackagePath = PackagePath.TrimEnd();
+	while (PackagePath.EndsWith(TEXT("/")))
+		PackagePath = PackagePath.LeftChop(1);
+	FString FullPath = PackagePath + TEXT("/") + EnumName;
+
+	// On-disk guard
+	if (FPackageName::DoesPackageExist(FullPath))
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Asset '%s' already exists at '%s'. Delete it first or choose a different name."),
+			*EnumName, *FullPath));
+	}
+
+	// Create package + enum
+	UPackage* Package = CreatePackage(*FullPath);
+	if (!Package)
+	{
+		return FMCPToolResult::Error(FString::Printf(TEXT("Failed to create package: %s"), *FullPath));
+	}
+
+	// CreateUserDefinedEnum returns UEnum* — cast to the derived UUserDefinedEnum
+	UUserDefinedEnum* NewEnum = Cast<UUserDefinedEnum>(FEnumEditorUtils::CreateUserDefinedEnum(
+		Package, FName(*EnumName), RF_Public | RF_Standalone | RF_Transactional));
+	if (!NewEnum)
+	{
+		return FMCPToolResult::Error(TEXT("FEnumEditorUtils::CreateUserDefinedEnum returned null"));
+	}
+
+	// Add named values if provided
+	TArray<FString> AddedValues;
+	const TArray<TSharedPtr<FJsonValue>>* ValuesArray;
+	if (Params->TryGetArrayField(TEXT("values"), ValuesArray))
+	{
+		for (const TSharedPtr<FJsonValue>& ValJson : *ValuesArray)
+		{
+			FString ValueName;
+			if (!ValJson.IsValid() || !ValJson->TryGetString(ValueName) || ValueName.IsEmpty())
+				continue;
+
+			FEnumEditorUtils::AddNewEnumeratorForUserDefinedEnum(NewEnum);
+			// The new enumerator is at index (NumEnums - 2): last slot before the hidden _MAX sentinel
+			int32 NewIdx = NewEnum->NumEnums() - 2;
+			if (NewIdx >= 0)
+			{
+				FEnumEditorUtils::SetEnumeratorDisplayName(NewEnum, NewIdx, FText::FromString(ValueName));
+				AddedValues.Add(ValueName);
+			}
+		}
+	}
+
+	Package->MarkPackageDirty();
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Created UserDefinedEnum '%s' with %d values at '%s'"),
+		*EnumName, AddedValues.Num(), *FullPath);
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("asset_path"), FullPath);
+	ResultData->SetStringField(TEXT("enum_name"), EnumName);
+	ResultData->SetNumberField(TEXT("value_count"), AddedValues.Num());
+	TArray<TSharedPtr<FJsonValue>> ValuesJson;
+	for (const FString& V : AddedValues)
+		ValuesJson.Add(MakeShared<FJsonValueString>(V));
+	ResultData->SetArrayField(TEXT("values"), ValuesJson);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Created enum '%s' with %d values — save project to persist"),
+			*EnumName, AddedValues.Num()),
+		ResultData);
+}
+
+// ===== TODO-06: UserDefinedStruct creation =====
+
+FMCPToolResult FMCPTool_Asset::ExecuteCreateStruct(const TSharedRef<FJsonObject>& Params)
+{
+	TOptional<FMCPToolResult> Error;
+	FString StructName, PackagePath;
+	if (!ExtractRequiredString(Params, TEXT("struct_name"), StructName, Error))
+		return Error.GetValue();
+	if (!ExtractRequiredString(Params, TEXT("package_path"), PackagePath, Error))
+		return Error.GetValue();
+
+	// Normalise path: strip trailing slash only — preserve the leading '/' required by UE
+	PackagePath = PackagePath.TrimEnd();
+	while (PackagePath.EndsWith(TEXT("/")))
+		PackagePath = PackagePath.LeftChop(1);
+	FString FullPath = PackagePath + TEXT("/") + StructName;
+
+	// On-disk guard
+	if (FPackageName::DoesPackageExist(FullPath))
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Asset '%s' already exists at '%s'. Delete it first or choose a different name."),
+			*StructName, *FullPath));
+	}
+
+	// Create package + struct
+	UPackage* Package = CreatePackage(*FullPath);
+	if (!Package)
+	{
+		return FMCPToolResult::Error(FString::Printf(TEXT("Failed to create package: %s"), *FullPath));
+	}
+
+	UUserDefinedStruct* NewStruct = FStructureEditorUtils::CreateUserDefinedStruct(
+		Package, FName(*StructName), RF_Public | RF_Standalone | RF_Transactional);
+	if (!NewStruct)
+	{
+		return FMCPToolResult::Error(TEXT("FStructureEditorUtils::CreateUserDefinedStruct returned null"));
+	}
+
+	// CreateUserDefinedStruct adds a default MemberVar_0:bool field. UE enforces a minimum
+	// of 1 variable so we cannot remove it — instead we repurpose it for the first user
+	// field (rename + retype), then add the remaining fields normally.
+	FGuid DefaultVarGuid;
+	bool bHasDefaultVar = FStructureEditorUtils::GetVarDesc(NewStruct).Num() > 0;
+	if (bHasDefaultVar)
+	{
+		DefaultVarGuid = FStructureEditorUtils::GetVarDesc(NewStruct)[0].VarGuid;
+	}
+
+	// Add typed fields if provided
+	TArray<FString> AddedFields;
+	TArray<FString> FieldErrors;
+	const TArray<TSharedPtr<FJsonValue>>* FieldsArray;
+	if (Params->TryGetArrayField(TEXT("fields"), FieldsArray))
+	{
+		bool bDefaultVarUsed = false;
+
+		for (const TSharedPtr<FJsonValue>& FieldJson : *FieldsArray)
+		{
+			const TSharedPtr<FJsonObject>* FieldObj;
+			if (!FieldJson.IsValid() || !FieldJson->TryGetObject(FieldObj))
+				continue;
+
+			FString FieldName, FieldType;
+			(*FieldObj)->TryGetStringField(TEXT("name"), FieldName);
+			(*FieldObj)->TryGetStringField(TEXT("type"), FieldType);
+
+			if (FieldName.IsEmpty() || FieldType.IsEmpty())
+			{
+				FieldErrors.Add(TEXT("Field entry missing 'name' or 'type'"));
+				continue;
+			}
+
+			// Parse the pin type using the same parser as add_variable
+			FEdGraphPinType PinType;
+			FString ParseErr;
+			if (!FBlueprintEditor::ParsePinType(FieldType, PinType, ParseErr))
+			{
+				FieldErrors.Add(FString::Printf(TEXT("Field '%s': unknown type '%s' — %s"), *FieldName, *FieldType, *ParseErr));
+				continue;
+			}
+
+			if (bHasDefaultVar && !bDefaultVarUsed)
+			{
+				// Repurpose MemberVar_0: rename it and change its type to match the first field.
+				// This avoids the "can't remove last variable" restriction.
+				FStructureEditorUtils::RenameVariable(NewStruct, DefaultVarGuid, FieldName);
+				FStructureEditorUtils::ChangeVariableType(NewStruct, DefaultVarGuid, PinType);
+				AddedFields.Add(FString::Printf(TEXT("%s:%s"), *FieldName, *FieldType));
+				bDefaultVarUsed = true;
+			}
+			else
+			{
+				// Subsequent fields: AddVariable appends with auto-name, then rename it.
+				int32 PrevCount = FStructureEditorUtils::GetVarDesc(NewStruct).Num();
+				if (FStructureEditorUtils::AddVariable(NewStruct, PinType))
+				{
+					const TArray<FStructVariableDescription>& VarDescs = FStructureEditorUtils::GetVarDesc(NewStruct);
+					if (VarDescs.Num() > PrevCount)
+					{
+						FGuid NewGuid = VarDescs[PrevCount].VarGuid;
+						FStructureEditorUtils::RenameVariable(NewStruct, NewGuid, FieldName);
+						AddedFields.Add(FString::Printf(TEXT("%s:%s"), *FieldName, *FieldType));
+					}
+				}
+				else
+				{
+					FieldErrors.Add(FString::Printf(TEXT("Field '%s': AddVariable failed"), *FieldName));
+				}
+			}
+		}
+	}
+
+	Package->MarkPackageDirty();
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Created UserDefinedStruct '%s' with %d fields at '%s'"),
+		*StructName, AddedFields.Num(), *FullPath);
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("asset_path"), FullPath);
+	ResultData->SetStringField(TEXT("struct_name"), StructName);
+	ResultData->SetNumberField(TEXT("field_count"), AddedFields.Num());
+	TArray<TSharedPtr<FJsonValue>> FieldsJson;
+	for (const FString& F : AddedFields)
+		FieldsJson.Add(MakeShared<FJsonValueString>(F));
+	ResultData->SetArrayField(TEXT("fields"), FieldsJson);
+	if (FieldErrors.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> ErrJson;
+		for (const FString& E : FieldErrors)
+			ErrJson.Add(MakeShared<FJsonValueString>(E));
+		ResultData->SetArrayField(TEXT("field_errors"), ErrJson);
+	}
+
+	FString Msg = FString::Printf(
+		TEXT("Created struct '%s' with %d fields — save project to persist"), *StructName, AddedFields.Num());
+	if (FieldErrors.Num() > 0)
+		Msg += FString::Printf(TEXT(" (%d field errors — see field_errors)"), FieldErrors.Num());
+
+	return FMCPToolResult::Success(Msg, ResultData);
 }

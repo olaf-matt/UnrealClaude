@@ -25,6 +25,7 @@
 #include "Kismet/KismetStringLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 // Static member initialization
 volatile int32 FBlueprintGraphEditor::NodeIdCounter = 0;
@@ -940,6 +941,9 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	UFunction* Function = nullptr;
 	UClass* FunctionOwner = nullptr;
 
+	// Track whether FunctionOwner came from a Blueprint-generated class
+	bool bIsBlueprintClass = false;
+
 	// Try to find class by name
 	if (!TargetClass.IsEmpty())
 	{
@@ -967,6 +971,15 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			else if (TargetClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
 			{
 				FunctionOwner = UGameplayStatics::StaticClass();
+			}
+		}
+		// If C++ lookup missed, try Blueprint asset registry (cross-Blueprint calls)
+		if (!FunctionOwner)
+		{
+			FunctionOwner = ResolveBlueprintClassByName(TargetClass);
+			if (FunctionOwner)
+			{
+				bIsBlueprintClass = true;
 			}
 		}
 	}
@@ -1027,11 +1040,38 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 		}
 	}
 
-	if (!Function && !bIsSelfCall)
+	// For cross-Blueprint calls: if the function isn't on the compiled GeneratedClass yet
+	// (target BP not compiled), check FunctionGraphs by name as a fallback.
+	// The node will still be created — it resolves at the caller BP's next compile.
+	bool bFoundInGraphsOnly = false;
+	if (!Function && !bIsSelfCall && bIsBlueprintClass && FunctionOwner)
+	{
+		UBlueprint* TargetBP = Cast<UBlueprint>(FunctionOwner->ClassGeneratedBy);
+		if (TargetBP)
+		{
+			for (UEdGraph* FuncGraph : TargetBP->FunctionGraphs)
+			{
+				if (FuncGraph && FuncGraph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+				{
+					bFoundInGraphsOnly = true;
+					UE_LOG(LogUnrealClaude, Warning,
+						TEXT("Function '%s' found in '%s' FunctionGraphs but not on compiled class — "
+						     "target BP may need recompiling. Node created with unresolved reference."),
+						*FunctionName, *TargetClass);
+					break;
+				}
+			}
+		}
+	}
+
+	if (!Function && !bIsSelfCall && !bFoundInGraphsOnly)
 	{
 		OutError = FString::Printf(
-			TEXT("Function '%s' not found. Searched: KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, GameplayStatics, this Blueprint's own functions. "
-			     "For C++ instance methods supply target_class (e.g. 'MaterialInstanceDynamic', 'NiagaraComponent', 'ActorComponent')."),
+			TEXT("Function '%s' not found. Searched: KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, "
+			     "GameplayStatics, this Blueprint's own functions, and the Blueprint asset registry. "
+			     "For C++ instance methods supply target_class (e.g. 'MaterialInstanceDynamic', 'NiagaraComponent'). "
+			     "For cross-Blueprint calls supply target_class with the BP asset name (e.g. 'BP_WeatherSystem'). "
+			     "Ensure the target Blueprint is compiled before adding cross-BP function nodes."),
 			*FunctionName);
 		return nullptr;
 	}
@@ -1054,6 +1094,12 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (bIsSelfCall)
 	{
 		CallNode->FunctionReference.SetSelfMember(FName(*FunctionName));
+	}
+	else if (bIsBlueprintClass && FunctionOwner)
+	{
+		// Cross-Blueprint call: SetExternalMember ensures a typed Target pin is exposed
+		// so the caller can wire a reference to the target BP instance.
+		CallNode->FunctionReference.SetExternalMember(FName(*FunctionName), FunctionOwner);
 	}
 	else
 	{
@@ -1359,7 +1405,51 @@ UClass* FBlueprintGraphEditor::ResolveClassByName(const FString& ClassName)
 	}
 
 	// Slow scan across all currently-loaded packages
-	return FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None);
+	if (UClass* Class = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None))
+	{
+		return Class;
+	}
+
+	// Blueprint-generated classes are named "ClassName_C" — try that suffix so callers
+	// can pass bare asset names like "BP_WeatherSystem" instead of "BP_WeatherSystem_C".
+	FString WithSuffix = ClassName + TEXT("_C");
+	if (UClass* Class = FindFirstObject<UClass>(*WithSuffix, EFindFirstObjectOptions::None))
+	{
+		return Class;
+	}
+
+	// Last resort: Asset Registry search (finds BPs not yet loaded into memory).
+	return ResolveBlueprintClassByName(ClassName);
+}
+
+UClass* FBlueprintGraphEditor::ResolveBlueprintClassByName(const FString& ShortName)
+{
+	if (ShortName.IsEmpty()) return nullptr;
+
+	IAssetRegistry* Registry = IAssetRegistry::Get();
+	if (!Registry) return nullptr;
+
+	// Search all Blueprint-derived asset types (AnimBlueprint, WidgetBlueprint, etc.)
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.bRecursiveClasses = true;
+
+	TArray<FAssetData> Assets;
+	Registry->GetAssets(Filter, Assets);
+
+	for (const FAssetData& Asset : Assets)
+	{
+		if (!Asset.AssetName.ToString().Equals(ShortName, ESearchCase::IgnoreCase))
+			continue;
+
+		UBlueprint* BP = Cast<UBlueprint>(Asset.GetAsset());
+		if (BP && BP->GeneratedClass)
+		{
+			return BP->GeneratedClass;
+		}
+	}
+
+	return nullptr;
 }
 
 UScriptStruct* FBlueprintGraphEditor::ResolveStructByName(const FString& StructName)

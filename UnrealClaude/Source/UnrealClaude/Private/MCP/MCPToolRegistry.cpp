@@ -31,6 +31,7 @@
 #include "Tools/MCPTool_Asset.h"
 #include "Tools/MCPTool_OpenLevel.h"
 #include "Tools/MCPTool_NiagaraQuery.h"
+#include "Tools/MCPTool_NiagaraModify.h"
 #include "Tools/MCPTool_SampleRenderTarget.h"
 
 // Task queue tools
@@ -114,6 +115,7 @@ void FMCPToolRegistry::RegisterBuiltinTools()
 
 	// Niagara tools
 	RegisterTool(MakeShared<FMCPTool_NiagaraQuery>());
+	RegisterTool(MakeShared<FMCPTool_NiagaraModify>());
 
 	// Render target tools
 	RegisterTool(MakeShared<FMCPTool_SampleRenderTarget>());
