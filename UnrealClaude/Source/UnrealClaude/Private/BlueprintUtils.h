@@ -107,6 +107,33 @@ public:
 		return FBlueprintEditor::RemoveVariable(Blueprint, VariableName, OutError);
 	}
 
+	FORCEINLINE static bool SetVariableDefault(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		const FString& DefaultValue,
+		FString& OutError)
+	{
+		return FBlueprintEditor::SetVariableDefault(Blueprint, VariableName, DefaultValue, OutError);
+	}
+
+	FORCEINLINE static bool SetVariableExposeOnSpawn(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		bool bExposeOnSpawn,
+		FString& OutError)
+	{
+		return FBlueprintEditor::SetVariableExposeOnSpawn(Blueprint, VariableName, bExposeOnSpawn, OutError);
+	}
+
+	FORCEINLINE static bool RenameVariable(
+		UBlueprint* Blueprint,
+		const FString& OldName,
+		const FString& NewName,
+		FString& OutError)
+	{
+		return FBlueprintEditor::RenameVariable(Blueprint, OldName, NewName, OutError);
+	}
+
 	FORCEINLINE static bool SetVariableInstanceEditable(
 		UBlueprint* Blueprint,
 		const FString& VariableName,
@@ -137,6 +164,42 @@ public:
 	FORCEINLINE static bool ValidateFunctionName(const FString& FunctionName, FString& OutError)
 	{
 		return FBlueprintEditor::ValidateFunctionName(FunctionName, OutError);
+	}
+
+	FORCEINLINE static bool AddComponent(
+		UBlueprint* Blueprint,
+		const FString& ComponentClassName,
+		const FString& ComponentName,
+		const FString& AssetPath,
+		FString& OutError)
+	{
+		return FBlueprintEditor::AddComponent(Blueprint, ComponentClassName, ComponentName, AssetPath, OutError);
+	}
+
+	FORCEINLINE static bool RemoveComponent(
+		UBlueprint* Blueprint,
+		const FString& ComponentName,
+		FString& OutError)
+	{
+		return FBlueprintEditor::RemoveComponent(Blueprint, ComponentName, OutError);
+	}
+
+	FORCEINLINE static bool SetComponentProperty(
+		UBlueprint* Blueprint,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FString& Value,
+		FString& OutError)
+	{
+		return FBlueprintEditor::SetComponentProperty(Blueprint, ComponentName, PropertyName, Value, OutError);
+	}
+
+	FORCEINLINE static bool AddInterface(
+		UBlueprint* Blueprint,
+		const FString& InterfaceName,
+		FString& OutError)
+	{
+		return FBlueprintEditor::AddInterface(Blueprint, InterfaceName, OutError);
 	}
 
 	// ===== Function Management (-> FBlueprintEditor) =====

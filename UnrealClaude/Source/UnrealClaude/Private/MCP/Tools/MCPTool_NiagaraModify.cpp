@@ -10,6 +10,7 @@
 #include "NiagaraScript.h"
 #include "NiagaraTypes.h"
 #include "NiagaraCommon.h"
+#include "NiagaraParameterStore.h"   // FNiagaraParameterStore::SetParameterValue<T>
 
 // Niagara editor (graph editing)
 #include "NiagaraScriptSource.h"
@@ -169,13 +170,14 @@ FMCPToolInfo FMCPTool_NiagaraModify::GetInfo() const
 		"Modify a NiagaraSystem asset: inspect emitters/stages/modules and add, remove,\n"
 		"or configure modules in a stage's script graph.\n\n"
 		"Operations:\n"
-		"  list_emitters    — list emitter handles (name, enabled, asset path)\n"
-		"  list_stages      — list script stages for a named emitter\n"
-		"  list_modules     — list function-call modules inside a stage graph\n"
-		"  add_module       — insert a module from a Niagara module script asset path\n"
-		"  remove_module    — remove a named module and break all its connections\n"
-		"  set_module_input — set a default-value override on a module's input pin\n"
-		"  compile          — force-recompile the system and mark it dirty\n\n"
+		"  list_emitters         — list emitter handles (name, enabled, asset path)\n"
+		"  list_stages           — list script stages for a named emitter\n"
+		"  list_modules          — list function-call modules inside a stage graph\n"
+		"  add_module            — insert a module from a Niagara module script asset path\n"
+		"  remove_module         — remove a named module and break all its connections\n"
+		"  set_module_input      — set a default-value override on a module's input pin\n"
+		"  set_system_user_param — set the default value of a user-exposed parameter in the asset\n"
+		"  compile               — force-recompile the system and mark it dirty\n\n"
 		"Stage names accepted by list_stages / list_modules / add_module / remove_module:\n"
 		"  EmitterSpawn, EmitterUpdate, ParticleSpawn (or Spawn), ParticleUpdate (or Update),\n"
 		"  EventHandler_0, EventHandler_1, ...\n\n"
@@ -196,12 +198,20 @@ FMCPToolInfo FMCPTool_NiagaraModify::GetInfo() const
 		"    \"stage\": \"ParticleUpdate\",\n"
 		"    \"module_name\": \"CurlNoiseForce\",\n"
 		"    \"input_name\": \"NoisePanSpeed\",\n"
-		"    \"value\": \"1.0\" }"
+		"    \"value\": \"1.0\" }\n\n"
+		"Example (set_system_user_param — float):\n"
+		"  { \"operation\": \"set_system_user_param\",\n"
+		"    \"system_path\": \"/Game/Blueprints/ShallowWater/FX_ShallowWater\",\n"
+		"    \"param_name\": \"User.WaterDepth\", \"value\": 25.0 }\n\n"
+		"Example (set_system_user_param — vec3):\n"
+		"  { \"operation\": \"set_system_user_param\",\n"
+		"    \"system_path\": \"/Game/Blueprints/ShallowWater/FX_ShallowWater\",\n"
+		"    \"param_name\": \"User.GravityDir\", \"value\": {\"X\": 0.0, \"Y\": 0.0, \"Z\": -1.0} }"
 	);
 
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
 		TEXT("Operation: list_emitters | list_stages | list_modules | add_module | "
-			 "remove_module | set_module_input | compile"), true));
+			 "remove_module | set_module_input | set_system_user_param | compile"), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("system_path"), TEXT("string"),
 		TEXT("Asset path to the NiagaraSystem, e.g. /Game/Particles/FX_MySystem"), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("emitter_name"), TEXT("string"),
@@ -215,9 +225,15 @@ FMCPToolInfo FMCPTool_NiagaraModify::GetInfo() const
 		TEXT("Module function name or node title (required for remove_module, set_module_input)"), false));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("input_name"), TEXT("string"),
 		TEXT("Input pin name on the module (required for set_module_input)"), false));
-	Info.Parameters.Add(FMCPToolParameter(TEXT("value"), TEXT("string"),
+	Info.Parameters.Add(FMCPToolParameter(TEXT("value"), TEXT("string or number"),
 		TEXT("Default value string for the input pin (required for set_module_input). "
-			 "Float: \"1.0\"; Vector: \"(X=0.0,Y=0.0,Z=1.0)\"; Bool: \"true\""), false));
+			 "Float: \"1.0\"; Vector: \"(X=0.0,Y=0.0,Z=1.0)\"; Bool: \"true\". "
+			 "For set_system_user_param: any JSON value (number, bool, or {X,Y,Z}/{R,G,B,A} object)."), false));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("param_name"), TEXT("string"),
+		TEXT("User parameter name for set_system_user_param, e.g. \"User.WaterDepth\""), false));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("param_type"), TEXT("string"),
+		TEXT("Type hint for set_system_user_param: \"float\"|\"int\"|\"bool\"|\"vec3\"|\"color\". "
+			 "Auto-detected from the system's exposed parameter store if omitted."), false));
 
 	Info.Annotations = FMCPToolAnnotations::Modifying();
 	return Info;
@@ -236,17 +252,18 @@ FMCPToolResult FMCPTool_NiagaraModify::Execute(const TSharedRef<FJsonObject>& Pa
 
 	const FString Lower = Operation.ToLower();
 
-	if (Lower == TEXT("list_emitters"))    return ExecuteListEmitters(Params);
-	if (Lower == TEXT("list_stages"))      return ExecuteListStages(Params);
-	if (Lower == TEXT("list_modules"))     return ExecuteListModules(Params);
-	if (Lower == TEXT("add_module"))       return ExecuteAddModule(Params);
-	if (Lower == TEXT("remove_module"))    return ExecuteRemoveModule(Params);
-	if (Lower == TEXT("set_module_input")) return ExecuteSetModuleInput(Params);
-	if (Lower == TEXT("compile"))          return ExecuteCompile(Params);
+	if (Lower == TEXT("list_emitters"))         return ExecuteListEmitters(Params);
+	if (Lower == TEXT("list_stages"))           return ExecuteListStages(Params);
+	if (Lower == TEXT("list_modules"))          return ExecuteListModules(Params);
+	if (Lower == TEXT("add_module"))            return ExecuteAddModule(Params);
+	if (Lower == TEXT("remove_module"))         return ExecuteRemoveModule(Params);
+	if (Lower == TEXT("set_module_input"))      return ExecuteSetModuleInput(Params);
+	if (Lower == TEXT("set_system_user_param")) return ExecuteSetSystemUserParam(Params);
+	if (Lower == TEXT("compile"))               return ExecuteCompile(Params);
 
 	return FMCPToolResult::Error(FString::Printf(
 		TEXT("Unknown operation '%s'. Valid: list_emitters, list_stages, list_modules, "
-			 "add_module, remove_module, set_module_input, compile"), *Operation));
+			 "add_module, remove_module, set_module_input, set_system_user_param, compile"), *Operation));
 }
 
 // ============================================================
@@ -834,4 +851,230 @@ FMCPToolResult FMCPTool_NiagaraModify::ExecuteCompile(const TSharedRef<FJsonObje
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("Recompile requested for NiagaraSystem '%s'."), *System->GetName()), Result);
+}
+
+// ============================================================
+//  set_system_user_param
+// ============================================================
+
+FMCPToolResult FMCPTool_NiagaraModify::ExecuteSetSystemUserParam(const TSharedRef<FJsonObject>& Params)
+{
+	FString SystemPath, ParamName;
+	TOptional<FMCPToolResult> Error;
+	if (!ExtractRequiredString(Params, TEXT("system_path"), SystemPath, Error)) return Error.GetValue();
+	if (!ExtractRequiredString(Params, TEXT("param_name"),  ParamName,  Error)) return Error.GetValue();
+	if (!ValidateBlueprintPathParam(SystemPath, Error))                          return Error.GetValue();
+
+	// value is required — any JSON type
+	const TSharedPtr<FJsonValue>* ValueFieldPtr = Params->Values.Find(TEXT("value"));
+	if (!ValueFieldPtr || !ValueFieldPtr->IsValid())
+	{
+		return FMCPToolResult::Error(TEXT("Missing required parameter: value"));
+	}
+	const TSharedPtr<FJsonValue>& JsonVal = *ValueFieldPtr;
+
+	// Optional explicit type hint ("float", "int", "bool", "vec3", "color")
+	FString TypeHint = ExtractOptionalString(Params, TEXT("param_type"), TEXT("")).ToLower();
+
+	// --- Load system ---
+	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
+	if (!System)
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Failed to load NiagaraSystem at '%s'."), *SystemPath));
+	}
+
+	// --- Find the parameter in the exposed store to get its type ---
+	FNiagaraUserRedirectionParameterStore& Store = System->GetExposedParameters();
+	TArray<FNiagaraVariable> Variables;
+	Store.GetParameters(Variables);
+
+	const FNiagaraVariable* FoundVar = nullptr;
+	for (const FNiagaraVariable& V : Variables)
+	{
+		if (V.GetName().ToString().Equals(ParamName, ESearchCase::IgnoreCase))
+		{
+			FoundVar = &V;
+			break;
+		}
+	}
+
+	// Build list of available params for error messages
+	auto BuildParamList = [&]() -> FString
+	{
+		TArray<FString> Names;
+		for (const FNiagaraVariable& V : Variables)
+		{
+			Names.Add(V.GetName().ToString());
+		}
+		return Names.Num() > 0 ? FString::Join(Names, TEXT(", ")) : TEXT("(none — use niagara_query to inspect)");
+	};
+
+	if (!FoundVar)
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("User parameter '%s' not found in NiagaraSystem '%s'. "
+				 "Available parameters: %s"),
+			*ParamName, *System->GetName(), *BuildParamList()));
+	}
+
+	// --- Normalise: re-parse string values (happens when schema type is "any") ---
+	TSharedPtr<FJsonValue> ReparsedVal;
+	if (JsonVal->Type == EJson::String)
+	{
+		FString Str = JsonVal->AsString().TrimStartAndEnd();
+		if (Str.StartsWith(TEXT("{")) || Str.StartsWith(TEXT("[")))
+		{
+			TSharedPtr<FJsonObject> ParsedObj;
+			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Str);
+			if (FJsonSerializer::Deserialize(Reader, ParsedObj) && ParsedObj.IsValid())
+			{
+				ReparsedVal = MakeShared<FJsonValueObject>(ParsedObj);
+			}
+		}
+		else if (Str.ToLower() == TEXT("true"))  { ReparsedVal = MakeShared<FJsonValueBoolean>(true);  }
+		else if (Str.ToLower() == TEXT("false")) { ReparsedVal = MakeShared<FJsonValueBoolean>(false); }
+		else if (!Str.IsEmpty() && (FChar::IsDigit(Str[0]) || Str[0] == TEXT('-') || Str[0] == TEXT('.')))
+		{
+			ReparsedVal = MakeShared<FJsonValueNumber>(FCString::Atod(*Str));
+		}
+	}
+	const TSharedPtr<FJsonValue>& ActualVal = ReparsedVal.IsValid() ? ReparsedVal : JsonVal;
+
+	// --- Dispatch on type ---
+	const FNiagaraTypeDefinition& TypeDef = FoundVar->GetType();
+	FString TypeApplied;
+
+	// FoundVar is the FNiagaraVariable retrieved directly from the store — use it as-is
+	// for SetParameterValue so its type and name match exactly what the store expects.
+	const FNiagaraVariable& StoredVar = *FoundVar;
+	EJson ValKind = ActualVal->Type;
+
+	// Float
+	if (TypeDef == FNiagaraTypeDefinition::GetFloatDef() || TypeHint == TEXT("float"))
+	{
+		double NumVal = 0.0;
+		if (!ActualVal->TryGetNumber(NumVal))
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Parameter '%s' is float — value must be a JSON number."), *ParamName));
+		}
+		Store.SetParameterValue<float>((float)NumVal, StoredVar);
+		TypeApplied = FString::Printf(TEXT("float = %.6f"), (float)NumVal);
+	}
+	// Int
+	else if (TypeDef == FNiagaraTypeDefinition::GetIntDef() || TypeHint == TEXT("int"))
+	{
+		double NumVal = 0.0;
+		if (!ActualVal->TryGetNumber(NumVal))
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Parameter '%s' is int — value must be a JSON number."), *ParamName));
+		}
+		Store.SetParameterValue<int32>((int32)NumVal, StoredVar);
+		TypeApplied = FString::Printf(TEXT("int = %d"), (int32)NumVal);
+	}
+	// Bool
+	else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef() || TypeHint == TEXT("bool"))
+	{
+		bool bVal = false;
+		if (ValKind == EJson::Boolean)
+		{
+			bVal = ActualVal->AsBool();
+		}
+		else
+		{
+			double NumVal = 0.0;
+			if (!ActualVal->TryGetNumber(NumVal))
+			{
+				return FMCPToolResult::Error(FString::Printf(
+					TEXT("Parameter '%s' is bool — value must be JSON true/false or 0/1."), *ParamName));
+			}
+			bVal = (NumVal != 0.0);
+		}
+		FNiagaraBool NiagaraBool(bVal);
+		Store.SetParameterValue<FNiagaraBool>(NiagaraBool, StoredVar);
+		TypeApplied = FString::Printf(TEXT("bool = %s"), bVal ? TEXT("true") : TEXT("false"));
+	}
+	// Vec3
+	else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def() || TypeHint == TEXT("vec3"))
+	{
+		const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
+		if (!ActualVal->TryGetObject(ObjPtr) || !ObjPtr || !(*ObjPtr).IsValid())
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Parameter '%s' is vec3 — value must be a JSON object {\"X\":...,\"Y\":...,\"Z\":...}."),
+				*ParamName));
+		}
+		const TSharedPtr<FJsonObject>& Obj = *ObjPtr;
+		double X = 0.0, Y = 0.0, Z = 0.0;
+		Obj->TryGetNumberField(TEXT("X"), X); Obj->TryGetNumberField(TEXT("x"), X);
+		Obj->TryGetNumberField(TEXT("Y"), Y); Obj->TryGetNumberField(TEXT("y"), Y);
+		Obj->TryGetNumberField(TEXT("Z"), Z); Obj->TryGetNumberField(TEXT("z"), Z);
+		// In UE5, Niagara vec3 is stored as FVector3f (single precision)
+		Store.SetParameterValue<FVector3f>(FVector3f((float)X, (float)Y, (float)Z), StoredVar);
+		TypeApplied = FString::Printf(TEXT("vec3 = (%.3f, %.3f, %.3f)"), X, Y, Z);
+	}
+	// Vec4 (stored as FVector4f)
+	else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+	{
+		const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
+		if (!ActualVal->TryGetObject(ObjPtr) || !ObjPtr || !(*ObjPtr).IsValid())
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Parameter '%s' is vec4 — value must be {\"X\":...,\"Y\":...,\"Z\":...,\"W\":...}."),
+				*ParamName));
+		}
+		const TSharedPtr<FJsonObject>& Obj = *ObjPtr;
+		double X = 0.0, Y = 0.0, Z = 0.0, W = 0.0;
+		Obj->TryGetNumberField(TEXT("X"), X); Obj->TryGetNumberField(TEXT("x"), X);
+		Obj->TryGetNumberField(TEXT("Y"), Y); Obj->TryGetNumberField(TEXT("y"), Y);
+		Obj->TryGetNumberField(TEXT("Z"), Z); Obj->TryGetNumberField(TEXT("z"), Z);
+		Obj->TryGetNumberField(TEXT("W"), W); Obj->TryGetNumberField(TEXT("w"), W);
+		Store.SetParameterValue<FVector4f>(FVector4f((float)X, (float)Y, (float)Z, (float)W), StoredVar);
+		TypeApplied = FString::Printf(TEXT("vec4 = (%.3f, %.3f, %.3f, %.3f)"), X, Y, Z, W);
+	}
+	// Color (stored as FLinearColor)
+	else if (TypeDef == FNiagaraTypeDefinition::GetColorDef() || TypeHint == TEXT("color"))
+	{
+		const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
+		if (!ActualVal->TryGetObject(ObjPtr) || !ObjPtr || !(*ObjPtr).IsValid())
+		{
+			return FMCPToolResult::Error(FString::Printf(
+				TEXT("Parameter '%s' is color — value must be {\"R\":...,\"G\":...,\"B\":...,\"A\":...}."),
+				*ParamName));
+		}
+		const TSharedPtr<FJsonObject>& Obj = *ObjPtr;
+		double R = 0.0, G = 0.0, B = 0.0, A = 1.0;
+		Obj->TryGetNumberField(TEXT("R"), R); Obj->TryGetNumberField(TEXT("r"), R);
+		Obj->TryGetNumberField(TEXT("G"), G); Obj->TryGetNumberField(TEXT("g"), G);
+		Obj->TryGetNumberField(TEXT("B"), B); Obj->TryGetNumberField(TEXT("b"), B);
+		Obj->TryGetNumberField(TEXT("A"), A); Obj->TryGetNumberField(TEXT("a"), A);
+		Store.SetParameterValue<FLinearColor>(FLinearColor((float)R, (float)G, (float)B, (float)A), StoredVar);
+		TypeApplied = FString::Printf(TEXT("color = (R=%.3f, G=%.3f, B=%.3f, A=%.3f)"), R, G, B, A);
+	}
+	else
+	{
+		// Data interface or unknown type — not settable via simple value
+		FString TypeName = TypeDef.GetName();
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Parameter '%s' has type '%s' which is not settable via set_system_user_param. "
+				 "Settable types: float, int, bool, vec3, vec4, color. "
+				 "Data interface parameters (is_data_interface:true from niagara_query) must be "
+				 "set in the editor."),
+			*ParamName, *TypeName));
+	}
+
+	// Mark dirty — no full recompile needed for a default value change
+	System->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetStringField(TEXT("system_path"), SystemPath);
+	Result->SetStringField(TEXT("system_name"), System->GetName());
+	Result->SetStringField(TEXT("param_name"), ParamName);
+	Result->SetStringField(TEXT("value_applied"), TypeApplied);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Set user parameter '%s' on NiagaraSystem '%s': %s"),
+			*ParamName, *System->GetName(), *TypeApplied), Result);
 }

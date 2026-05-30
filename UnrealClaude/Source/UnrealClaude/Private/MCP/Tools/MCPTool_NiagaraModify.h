@@ -45,6 +45,7 @@ private:
 	FMCPToolResult ExecuteRemoveModule(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetModuleInput(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteCompile(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetSystemUserParam(const TSharedRef<FJsonObject>& Params);
 
 	// --- Shared helpers ---
 

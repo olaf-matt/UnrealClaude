@@ -40,13 +40,20 @@ public:
 		Info.Description = TEXT(
 			"Create and modify Blueprints programmatically. Auto-compiles after each operation.\n\n"
 			"OPERATION → REQUIRED PARAMS:\n"
-			"  create                       → package_path, blueprint_name, parent_class\n"
-			"  add_variable                 → blueprint_path, variable_name, variable_type\n"
-			"  remove_variable              → blueprint_path, variable_name\n"
+			"  create                         → package_path, blueprint_name, parent_class\n"
+			"  add_variable                   → blueprint_path, variable_name, variable_type\n"
+			"  remove_variable                → blueprint_path, variable_name\n"
 			"  set_variable_instance_editable → blueprint_path, variable_name, instance_editable\n"
-			"  add_function                 → blueprint_path, function_name [, inputs]\n"
-			"  add_function_input → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
-			"  remove_function    → blueprint_path, function_name\n"
+			"  set_variable_default           → blueprint_path, variable_name, default_value (string)\n"
+			"  set_variable_expose_on_spawn   → blueprint_path, variable_name, expose_on_spawn (bool)\n"
+			"  rename_variable                → blueprint_path, variable_name, new_name\n"
+			"  add_function                   → blueprint_path, function_name [, inputs]\n"
+			"  add_function_input             → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
+			"  remove_function                → blueprint_path, function_name\n"
+			"  add_component     → blueprint_path, component_class, component_name [, asset]\n"
+			"  remove_component  → blueprint_path, component_name\n"
+			"  set_component_property → blueprint_path, component_name, property_name, value\n"
+			"  add_interface     → blueprint_path, interface_name\n"
 			"  add_node        → blueprint_path, node_type [, graph_name, is_function_graph, node_params, pos_x, pos_y]\n"
 			"  add_nodes       → blueprint_path, nodes[] [, connections[], graph_name, is_function_graph]\n"
 			"  delete_node     → blueprint_path, node_id [, graph_name, is_function_graph]\n"
@@ -67,7 +74,7 @@ public:
 			"  PrintString, Add, Subtract, Multiply, Divide — no required params\n\n"
 			"PIN NAMES (use blueprint_query 'get_node_pins' to verify for any node):\n"
 			"  Exec input='execute'  Exec output='then'\n"
-			"  Branch: input='Condition', outputs='True'/'False'\n"
+			"  Branch: input='Condition', outputs='then' (true path) / 'else' (false path)\n"
 			"  Sequence: outputs='then_0','then_1','then_2',...\n"
 			"  VariableSet: data input matches variable name (e.g. 'MyVar')\n"
 			"  Omit source_pin/target_pin to auto-connect first available exec pins.\n\n"
@@ -180,6 +187,19 @@ private:
 	FMCPToolResult ExecuteDisconnectPins(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetPinValue(const TSharedRef<FJsonObject>& Params);
 
+	// Group A — Variable additions
+	FMCPToolResult ExecuteSetVariableDefault(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetVariableExposeOnSpawn(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRenameVariable(const TSharedRef<FJsonObject>& Params);
+
+	// Group B — Component management
+	FMCPToolResult ExecuteAddComponent(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRemoveComponent(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetComponentProperty(const TSharedRef<FJsonObject>& Params);
+
+	// Group C — Blueprint class management
+	FMCPToolResult ExecuteAddInterface(const TSharedRef<FJsonObject>& Params);
+
 	// Helpers
 	EBlueprintType ParseBlueprintType(const FString& TypeString);
 
@@ -192,9 +212,11 @@ private:
 		FString& OutError
 	);
 
+	// LocalIdToGuid maps local "id" strings from the add_nodes call to real node_ids (TODO-22)
 	TArray<TSharedPtr<FJsonValue>> ProcessNodeConnections(
 		UEdGraph* Graph,
 		const TArray<TSharedPtr<FJsonValue>>& ConnectionsArray,
-		const TArray<FString>& CreatedNodeIds
+		const TArray<FString>& CreatedNodeIds,
+		const TMap<FString, FString>& LocalIdToGuid
 	);
 };
