@@ -30,6 +30,7 @@ public:
 
 private:
 	// Operation handlers
+	FMCPToolResult ExecuteCreateMaterial(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteCreateMaterialInstance(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetMaterialParameters(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetSkeletalMeshMaterial(const TSharedRef<FJsonObject>& Params);

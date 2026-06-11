@@ -26,4 +26,5 @@ public:
 
 private:
 	FMCPToolResult ExecuteInspect(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteInspectCollection(const TSharedRef<FJsonObject>& Params);
 };

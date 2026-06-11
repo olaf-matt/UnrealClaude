@@ -22,6 +22,10 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "Factories/MaterialFactoryNew.h"
+#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionConstant3Vector.h"
+// UMaterialEditorOnlyData is declared in Materials/Material.h (already included)
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
 #include "EditorAssetLibrary.h"
@@ -34,6 +38,7 @@ FMCPToolInfo FMCPTool_Material::GetInfo() const
 	Info.Description = TEXT(
 		"Material instance creation, parameter editing, and assignment for actors and meshes.\n\n"
 		"OPERATION → REQUIRED PARAMS:\n"
+		"  create_material           → asset_name [, package_path, blend_mode, base_color, roughness, metallic, opacity, specular]\n"
 		"  create_material_instance  → asset_name, parent_material [, package_path, parameters]\n"
 		"  set_material_parameters   → material_instance_path, parameters\n"
 		"  set_skeletal_mesh_material→ skeletal_mesh_path, material_slot, material_path\n"
@@ -46,7 +51,21 @@ FMCPToolInfo FMCPTool_Material::GetInfo() const
 
 	// Parameters
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
-		TEXT("create_material_instance | set_material_parameters | set_skeletal_mesh_material | set_actor_material | get_material_info"), true));
+		TEXT("create_material | create_material_instance | set_material_parameters | set_skeletal_mesh_material | set_actor_material | get_material_info"), true));
+
+	// create_material params
+	Info.Parameters.Add(FMCPToolParameter(TEXT("blend_mode"), TEXT("string"),
+		TEXT("Blend mode: opaque (default), translucent, masked, additive. For create_material.")));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("base_color"), TEXT("object"),
+		TEXT("{\"r\":0.0,\"g\":0.15,\"b\":0.2} — BaseColor constant. Default white.")));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("roughness"), TEXT("number"),
+		TEXT("Roughness constant 0–1. Default 0.5.")));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("metallic"), TEXT("number"),
+		TEXT("Metallic constant 0–1. Default 0.")));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("opacity"), TEXT("number"),
+		TEXT("Opacity constant 0–1 (only used for translucent/masked). Default 1.")));
+	Info.Parameters.Add(FMCPToolParameter(TEXT("specular"), TEXT("number"),
+		TEXT("Specular constant 0–1. Default 0.5.")));
 
 	// create_material_instance params
 	Info.Parameters.Add(FMCPToolParameter(TEXT("asset_name"), TEXT("string"),
@@ -94,7 +113,11 @@ FMCPToolResult FMCPTool_Material::Execute(const TSharedRef<FJsonObject>& Params)
 
 	Operation = Operation.ToLower();
 
-	if (Operation == TEXT("create_material_instance"))
+	if (Operation == TEXT("create_material"))
+	{
+		return ExecuteCreateMaterial(Params);
+	}
+	else if (Operation == TEXT("create_material_instance"))
 	{
 		return ExecuteCreateMaterialInstance(Params);
 	}
@@ -118,6 +141,137 @@ FMCPToolResult FMCPTool_Material::Execute(const TSharedRef<FJsonObject>& Params)
 	return FMCPToolResult::Error(FString::Printf(
 		TEXT("Unknown operation: %s. Valid: create_material_instance, set_material_parameters, set_skeletal_mesh_material, set_actor_material, get_material_info"),
 		*Operation));
+}
+
+FMCPToolResult FMCPTool_Material::ExecuteCreateMaterial(const TSharedRef<FJsonObject>& Params)
+{
+	// ── Required ────────────────────────────────────────────────────────────────
+	FString AssetName;
+	TOptional<FMCPToolResult> Error;
+	if (!ExtractRequiredString(Params, TEXT("asset_name"), AssetName, Error))
+		return Error.GetValue();
+
+	// ── Optional ────────────────────────────────────────────────────────────────
+	FString PackagePath = Params->HasField(TEXT("package_path"))
+		? Params->GetStringField(TEXT("package_path"))
+		: TEXT("/Game/Materials");
+	if (!PackagePath.EndsWith(TEXT("/")))
+		PackagePath += TEXT("/");
+
+	FString BlendModeStr;
+	Params->TryGetStringField(TEXT("blend_mode"), BlendModeStr);
+	BlendModeStr = BlendModeStr.ToLower();
+
+	// BaseColor (default white)
+	double BaseR = 1.0, BaseG = 1.0, BaseB = 1.0;
+	const TSharedPtr<FJsonObject>* BaseColorObj;
+	if (Params->TryGetObjectField(TEXT("base_color"), BaseColorObj))
+	{
+		(*BaseColorObj)->TryGetNumberField(TEXT("r"), BaseR);
+		(*BaseColorObj)->TryGetNumberField(TEXT("g"), BaseG);
+		(*BaseColorObj)->TryGetNumberField(TEXT("b"), BaseB);
+	}
+
+	double Roughness = 0.5;  Params->TryGetNumberField(TEXT("roughness"), Roughness);
+	double Metallic  = 0.0;  Params->TryGetNumberField(TEXT("metallic"),  Metallic);
+	double Opacity   = 1.0;  Params->TryGetNumberField(TEXT("opacity"),   Opacity);
+	double Specular  = 0.5;  Params->TryGetNumberField(TEXT("specular"),  Specular);
+
+	// ── Create package ──────────────────────────────────────────────────────────
+	FString FullPath = PackagePath + AssetName;
+	UPackage* Package = CreatePackage(*FullPath);
+	if (!Package)
+		return FMCPToolResult::Error(FString::Printf(TEXT("Failed to create package: %s"), *FullPath));
+
+	// ── Create UMaterial via factory ────────────────────────────────────────────
+	UMaterialFactoryNew* MatFactory = NewObject<UMaterialFactoryNew>();
+	UMaterial* Material = Cast<UMaterial>(
+		MatFactory->FactoryCreateNew(
+			UMaterial::StaticClass(), Package, FName(*AssetName),
+			RF_Public | RF_Standalone, nullptr, GWarn));
+	if (!Material)
+		return FMCPToolResult::Error(TEXT("Failed to create UMaterial asset"));
+
+	// ── Blend mode ──────────────────────────────────────────────────────────────
+	EBlendMode BlendMode = BLEND_Opaque;
+	if      (BlendModeStr == TEXT("translucent")) BlendMode = BLEND_Translucent;
+	else if (BlendModeStr == TEXT("masked"))      BlendMode = BLEND_Masked;
+	else if (BlendModeStr == TEXT("additive"))    BlendMode = BLEND_Additive;
+	Material->BlendMode = BlendMode;
+
+	// Surface lighting gives better translucent shading quality
+	if (BlendMode == BLEND_Translucent)
+		Material->TranslucencyLightingMode = TLM_Surface;
+
+	// ── Helper: add expression to material graph ─────────────────────────────────
+	auto AddExpr = [&](UMaterialExpression* Expr, int32 X, int32 Y)
+	{
+		Expr->MaterialExpressionEditorX = X;
+		Expr->MaterialExpressionEditorY = Y;
+		Material->GetExpressionCollection().Expressions.Add(Expr);
+	};
+
+	// ── BaseColor ───────────────────────────────────────────────────────────────
+	UMaterialExpressionConstant3Vector* ColorExpr = NewObject<UMaterialExpressionConstant3Vector>(Material);
+	ColorExpr->Constant = FLinearColor((float)BaseR, (float)BaseG, (float)BaseB, 1.0f);
+	AddExpr(ColorExpr, -400, 0);
+	// In UE5.3+ material input pins live in editor-only data
+	UMaterialEditorOnlyData* EditorData = Material->GetEditorOnlyData();
+	EditorData->BaseColor.Expression = ColorExpr;
+
+	// ── Metallic ─────────────────────────────────────────────────────────────────
+	UMaterialExpressionConstant* MetallicExpr = NewObject<UMaterialExpressionConstant>(Material);
+	MetallicExpr->R = (float)Metallic;
+	AddExpr(MetallicExpr, -400, 120);
+	EditorData->Metallic.Expression = MetallicExpr;
+
+	// ── Roughness ────────────────────────────────────────────────────────────────
+	UMaterialExpressionConstant* RoughExpr = NewObject<UMaterialExpressionConstant>(Material);
+	RoughExpr->R = (float)Roughness;
+	AddExpr(RoughExpr, -400, 200);
+	EditorData->Roughness.Expression = RoughExpr;
+
+	// ── Specular ─────────────────────────────────────────────────────────────────
+	UMaterialExpressionConstant* SpecExpr = NewObject<UMaterialExpressionConstant>(Material);
+	SpecExpr->R = (float)Specular;
+	AddExpr(SpecExpr, -400, 280);
+	EditorData->Specular.Expression = SpecExpr;
+
+	// ── Opacity (translucent) or OpacityMask (masked) ────────────────────────────
+	if (BlendMode == BLEND_Translucent || BlendMode == BLEND_Masked)
+	{
+		UMaterialExpressionConstant* OpacityExpr = NewObject<UMaterialExpressionConstant>(Material);
+		OpacityExpr->R = (float)Opacity;
+		AddExpr(OpacityExpr, -400, 360);
+		if (BlendMode == BLEND_Translucent)
+			EditorData->Opacity.Expression = OpacityExpr;
+		else
+			EditorData->OpacityMask.Expression = OpacityExpr;
+	}
+
+	// ── Compile and save ─────────────────────────────────────────────────────────
+	Material->PreEditChange(nullptr);
+	Material->PostEditChange();
+	Material->MarkPackageDirty();
+	FAssetRegistryModule::AssetCreated(Material);
+
+	FString PackageFileName = FPackageName::LongPackageNameToFilename(FullPath, FPackageName::GetAssetPackageExtension());
+	FSavePackageArgs SaveArgs;
+	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+	FSavePackageResultStruct SaveResult = UPackage::Save(Package, Material, *PackageFileName, SaveArgs);
+	if (!SaveResult.IsSuccessful())
+		return FMCPToolResult::Error(FString::Printf(TEXT("Material created but failed to save: %s"), *FullPath));
+
+	// ── Result ───────────────────────────────────────────────────────────────────
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("asset_path"), FullPath);
+	ResultData->SetStringField(TEXT("blend_mode"), BlendModeStr.IsEmpty() ? TEXT("opaque") : BlendModeStr);
+	ResultData->SetBoolField(TEXT("saved"), true);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Created material '%s' (blend_mode=%s)"),
+			*FullPath, BlendModeStr.IsEmpty() ? TEXT("opaque") : *BlendModeStr),
+		ResultData);
 }
 
 FMCPToolResult FMCPTool_Material::ExecuteCreateMaterialInstance(const TSharedRef<FJsonObject>& Params)

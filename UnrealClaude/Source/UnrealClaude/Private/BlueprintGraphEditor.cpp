@@ -26,6 +26,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 
 // Static member initialization
 volatile int32 FBlueprintGraphEditor::NodeIdCounter = 0;
@@ -941,6 +943,12 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	UFunction* Function = nullptr;
 	UClass* FunctionOwner = nullptr;
 
+	// ResolvedFunctionName tracks the actual UFUNCTION name to use.
+	// Many Actor/Component methods have a "K2_" prefixed UFUNCTION name that differs from the
+	// user-facing C++ name (e.g. "GetActorLocation" → "K2_GetActorLocation").
+	// We update this when the K2_ fallback is used so SetExternalMember gets the right name.
+	FString ResolvedFunctionName = FunctionName;
+
 	// Track whether FunctionOwner came from a Blueprint-generated class
 	bool bIsBlueprintClass = false;
 
@@ -992,6 +1000,23 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (FunctionOwner)
 	{
 		Function = FunctionOwner->FindFunctionByName(FName(*FunctionName));
+
+		// Many Actor/ActorComponent methods are exposed to Blueprint under a "K2_" prefix
+		// (e.g. GetActorLocation → K2_GetActorLocation, SetActorLocation → K2_SetActorLocation,
+		//  GetActorRotation → K2_GetActorRotation, GetActorTransform → K2_GetActorTransform).
+		// Try the prefixed name before falling through to library searches.
+		if (!Function && !TargetClass.IsEmpty())
+		{
+			FString K2Name = TEXT("K2_") + FunctionName;
+			UFunction* K2Func = FunctionOwner->FindFunctionByName(FName(*K2Name));
+			if (K2Func)
+			{
+				Function = K2Func;
+				ResolvedFunctionName = K2Name;
+				UE_LOG(LogUnrealClaude, Log, TEXT("Resolved '%s' → '%s' via K2_ prefix on class '%s'"),
+					*FunctionName, *K2Name, *TargetClass);
+			}
+		}
 	}
 
 	// If not found in specified class, search common libraries
@@ -1036,6 +1061,25 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			if (!bIsSelfCall && Blueprint->GeneratedClass)
 			{
 				Function = Blueprint->GeneratedClass->FindFunctionByName(FName(*FunctionName));
+
+				// K2_ prefix fallback: inherited Actor/Component methods are often exposed
+				// to Blueprint under a "K2_" prefix (e.g. SetActorLocation → K2_SetActorLocation,
+				// SetActorRotation → K2_SetActorRotation). Try the prefixed name on the
+				// Generated Class so callers can use the user-facing name without the prefix.
+				if (!Function)
+				{
+					FString K2Name = TEXT("K2_") + FunctionName;
+					UFunction* K2Func = Blueprint->GeneratedClass->FindFunctionByName(FName(*K2Name));
+					if (K2Func)
+					{
+						Function = K2Func;
+						ResolvedFunctionName = K2Name;
+						bIsSelfCall = true; // SetSelfMember so no explicit Target pin is exposed
+						UE_LOG(LogUnrealClaude, Log,
+							TEXT("Self-call: resolved '%s' → '%s' via K2_ prefix on GeneratedClass"),
+							*FunctionName, *K2Name);
+					}
+				}
 			}
 		}
 	}
@@ -1093,13 +1137,25 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	UK2Node_CallFunction* CallNode = NodeCreator.CreateNode();
 	if (bIsSelfCall)
 	{
-		CallNode->FunctionReference.SetSelfMember(FName(*FunctionName));
+		// ResolvedFunctionName may carry a K2_ prefix when the Blueprint-callable
+		// wrapper differs from the user-facing C++ name (e.g. "K2_SetActorLocation").
+		CallNode->FunctionReference.SetSelfMember(FName(*ResolvedFunctionName));
 	}
-	else if (bIsBlueprintClass && FunctionOwner)
+	else if (!TargetClass.IsEmpty() && FunctionOwner)
 	{
-		// Cross-Blueprint call: SetExternalMember ensures a typed Target pin is exposed
-		// so the caller can wire a reference to the target BP instance.
-		CallNode->FunctionReference.SetExternalMember(FName(*FunctionName), FunctionOwner);
+		// Explicit target class — C++ instance method OR Blueprint-generated class.
+		//
+		// SetExternalMember is required in both cases to expose a typed Target pin,
+		// so the caller can wire a reference to a specific instance.
+		//
+		// SetFromFunction would call SetFromField(Function, bSelfContext=IsActorBased),
+		// which for Actor-based Blueprints suppresses the Target pin and treats the call
+		// as a self-call — making functions like GetActorLocation / GetActorRotation
+		// impossible to invoke on an external actor reference from another Actor BP.
+		//
+		// ResolvedFunctionName may differ from FunctionName when the K2_ prefix was applied
+		// (e.g. "GetActorLocation" → "K2_GetActorLocation").
+		CallNode->FunctionReference.SetExternalMember(FName(*ResolvedFunctionName), FunctionOwner);
 	}
 	else
 	{
@@ -1210,7 +1266,7 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableGetNode(
 		return nullptr;
 	}
 
-	// Verify variable exists
+	// Verify variable exists — check member variables first, then SCS component variables
 	FName VarName(*VariableName);
 	bool bFound = false;
 	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
@@ -1222,9 +1278,26 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableGetNode(
 		}
 	}
 
+	// SCS component variables (added via Components panel or add_component MCP op) live in
+	// SimpleConstructionScript->GetAllNodes(), NOT in NewVariables.  The Blueprint compiler
+	// exposes them as properties on the Generated Class, so SetSelfMember still works.
+	if (!bFound && Blueprint->SimpleConstructionScript)
+	{
+		for (USCS_Node* SCSNode : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (SCSNode && SCSNode->GetVariableName() == VarName)
+			{
+				bFound = true;
+				break;
+			}
+		}
+	}
+
 	if (!bFound)
 	{
-		OutError = FString::Printf(TEXT("Variable '%s' not found in Blueprint"), *VariableName);
+		OutError = FString::Printf(
+			TEXT("Variable '%s' not found in Blueprint (searched member variables and SCS components)"),
+			*VariableName);
 		return nullptr;
 	}
 

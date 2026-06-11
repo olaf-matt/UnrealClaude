@@ -7,24 +7,25 @@
 #include "NiagaraSystem.h"
 #include "NiagaraParameterStore.h"
 #include "NiagaraTypes.h"
+#include "NiagaraParameterCollection.h"
 
 FMCPToolInfo FMCPTool_NiagaraQuery::GetInfo() const
 {
 	FMCPToolInfo Info;
 	Info.Name = TEXT("niagara_query");
 	Info.Description = TEXT(
-		"Query a NiagaraSystem asset's exposed user parameters (read-only).\n\n"
-		"Returns the names, types, and data-interface flag for every parameter in the\n"
-		"system's exposed parameter store.  Use this before wiring a readback system\n"
-		"to confirm it has the expected inputs (e.g. Pontoons, Blueprint, bExportBuoyancy).\n\n"
+		"Query NiagaraSystem user parameters or NiagaraParameterCollection parameters (read-only).\n\n"
 		"Operations:\n"
-		"  inspect  — list all exposed user parameters\n\n"
-		"Example:\n"
-		"  { \"operation\": \"inspect\", \"system_path\": \"/Game/03/Particles/FX_Syst_Readback_03\" }"
+		"  inspect            — list all exposed user parameters on a NiagaraSystem\n"
+		"  inspect_collection — list parameters and default values from a NiagaraParameterCollection\n\n"
+		"Example (inspect system):\n"
+		"  { \"operation\": \"inspect\", \"system_path\": \"/Game/03/Particles/FX_Syst_Readback_03\" }\n\n"
+		"Example (inspect collection):\n"
+		"  { \"operation\": \"inspect_collection\", \"system_path\": \"/Game/Particles/Collections/FX_Col_NiagaraBuoyancy\" }"
 	);
 
 	Info.Parameters.Add(FMCPToolParameter(TEXT("operation"), TEXT("string"),
-		TEXT("Operation to perform. Currently: inspect"), true));
+		TEXT("Operation to perform: inspect | inspect_collection"), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("system_path"), TEXT("string"),
 		TEXT("Asset path of the NiagaraSystem to inspect, e.g. /Game/03/Particles/FX_Syst_Readback_03"), true));
 
@@ -43,13 +44,11 @@ FMCPToolResult FMCPTool_NiagaraQuery::Execute(const TSharedRef<FJsonObject>& Par
 
 	Operation = Operation.ToLower();
 
-	if (Operation == TEXT("inspect"))
-	{
-		return ExecuteInspect(Params);
-	}
+	if (Operation == TEXT("inspect"))           return ExecuteInspect(Params);
+	if (Operation == TEXT("inspect_collection")) return ExecuteInspectCollection(Params);
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: '%s'. Valid operations: inspect"), *Operation));
+		TEXT("Unknown operation: '%s'. Valid operations: inspect, inspect_collection"), *Operation));
 }
 
 FMCPToolResult FMCPTool_NiagaraQuery::ExecuteInspect(const TSharedRef<FJsonObject>& Params)
@@ -128,5 +127,126 @@ FMCPToolResult FMCPTool_NiagaraQuery::ExecuteInspect(const TSharedRef<FJsonObjec
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("NiagaraSystem '%s' has %d exposed parameter(s)"),
 			*NiagaraSystem->GetName(), ParamsArray.Num()),
+		ResultData);
+}
+
+// ============================================================
+//  inspect_collection (TODO-26)
+//  Read parameters and default values from a NiagaraParameterCollection.
+// ============================================================
+
+FMCPToolResult FMCPTool_NiagaraQuery::ExecuteInspectCollection(const TSharedRef<FJsonObject>& Params)
+{
+	FString CollectionPath;
+	TOptional<FMCPToolResult> Error;
+	if (!ExtractRequiredString(Params, TEXT("system_path"), CollectionPath, Error))
+	{
+		return Error.GetValue();
+	}
+	if (!ValidateBlueprintPathParam(CollectionPath, Error))
+	{
+		return Error.GetValue();
+	}
+
+	UNiagaraParameterCollection* NPC = LoadObject<UNiagaraParameterCollection>(nullptr, *CollectionPath);
+	if (!NPC)
+	{
+		const FString FullPath = CollectionPath + TEXT(".") + FPackageName::GetShortName(CollectionPath);
+		NPC = LoadObject<UNiagaraParameterCollection>(nullptr, *FullPath);
+	}
+	if (!NPC)
+	{
+		return FMCPToolResult::Error(FString::Printf(
+			TEXT("Failed to load NiagaraParameterCollection at '%s'. "
+				 "Ensure the path points to a .uasset of type NiagaraParameterCollection."),
+			*CollectionPath));
+	}
+
+	const TArray<FNiagaraVariable>& Parameters = NPC->GetParameters();
+
+	// Default values live in the default instance's parameter store
+	UNiagaraParameterCollectionInstance* DefaultInstance = NPC->GetDefaultInstance();
+	const FNiagaraParameterStore* DefaultStore = DefaultInstance
+		? &DefaultInstance->GetParameterStore() : nullptr;
+
+	TArray<TSharedPtr<FJsonValue>> ParamsArray;
+	for (const FNiagaraVariable& Var : Parameters)
+	{
+		const FNiagaraTypeDefinition& TypeDef = Var.GetType();
+		if (!TypeDef.IsValid()) continue;
+
+		FString TypeStr;
+		if (const UClass* VarClass = TypeDef.GetClass())
+			TypeStr = FString::Printf(TEXT("object:%s"), *VarClass->GetName());
+		else if (const UScriptStruct* VarStruct = Cast<UScriptStruct>(TypeDef.GetStruct()))
+			TypeStr = FString::Printf(TEXT("struct:%s"), *VarStruct->GetName());
+		else
+			TypeStr = TypeDef.GetName();
+
+		TSharedPtr<FJsonObject> VarObj = MakeShared<FJsonObject>();
+		VarObj->SetStringField(TEXT("name"), Var.GetName().ToString());
+		VarObj->SetStringField(TEXT("type"), TypeStr);
+		VarObj->SetBoolField  (TEXT("is_data_interface"), TypeDef.IsDataInterface());
+
+		// Try to read the default value for known scalar/vector types
+		if (DefaultStore && !TypeDef.IsDataInterface())
+		{
+			const uint8* RawData = DefaultStore->GetParameterData(Var);
+			if (RawData)
+			{
+				if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+				{
+					VarObj->SetNumberField(TEXT("default_value"), (double)(*(const float*)RawData));
+				}
+				else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+				{
+					VarObj->SetNumberField(TEXT("default_value"), (double)(*(const int32*)RawData));
+				}
+				else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+				{
+					VarObj->SetBoolField(TEXT("default_value"), (*(const int32*)RawData) != 0);
+				}
+				else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+				{
+					const FVector3f* V = (const FVector3f*)RawData;
+					TSharedPtr<FJsonObject> VJ = MakeShared<FJsonObject>();
+					VJ->SetNumberField(TEXT("X"), V->X);
+					VJ->SetNumberField(TEXT("Y"), V->Y);
+					VJ->SetNumberField(TEXT("Z"), V->Z);
+					VarObj->SetObjectField(TEXT("default_value"), VJ);
+				}
+				else if (TypeDef == FNiagaraTypeDefinition::GetVec2Def())
+				{
+					const FVector2f* V = (const FVector2f*)RawData;
+					TSharedPtr<FJsonObject> VJ = MakeShared<FJsonObject>();
+					VJ->SetNumberField(TEXT("X"), V->X);
+					VJ->SetNumberField(TEXT("Y"), V->Y);
+					VarObj->SetObjectField(TEXT("default_value"), VJ);
+				}
+				else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+				{
+					const FLinearColor* C = (const FLinearColor*)RawData;
+					TSharedPtr<FJsonObject> CJ = MakeShared<FJsonObject>();
+					CJ->SetNumberField(TEXT("R"), C->R);
+					CJ->SetNumberField(TEXT("G"), C->G);
+					CJ->SetNumberField(TEXT("B"), C->B);
+					CJ->SetNumberField(TEXT("A"), C->A);
+					VarObj->SetObjectField(TEXT("default_value"), CJ);
+				}
+			}
+		}
+
+		ParamsArray.Add(MakeShared<FJsonValueObject>(VarObj));
+	}
+
+	TSharedPtr<FJsonObject> ResultData = MakeShared<FJsonObject>();
+	ResultData->SetStringField(TEXT("collection_path"), CollectionPath);
+	ResultData->SetStringField(TEXT("collection_name"), NPC->GetName());
+	ResultData->SetNumberField(TEXT("parameter_count"), ParamsArray.Num());
+	ResultData->SetArrayField (TEXT("parameters"),      ParamsArray);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("NiagaraParameterCollection '%s' has %d parameter(s)"),
+			*NPC->GetName(), ParamsArray.Num()),
 		ResultData);
 }

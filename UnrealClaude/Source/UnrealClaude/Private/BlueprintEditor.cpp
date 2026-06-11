@@ -908,7 +908,7 @@ bool FBlueprintEditor::ParsePinType(
 		}
 	}
 
-	OutError = FString::Printf(TEXT("Unknown type: '%s'. Supported: bool, int, float, double, byte, FString, FName, FText, Vector, Rotator, Transform, LinearColor, TArray<T>, TSet<T>, or any C++ class name (with or without * suffix)."), *TypeString);
+	OutError = FString::Printf(TEXT("Unknown type: '%s'. Supported: bool, int, float, double, byte, FString, FName, FText, Vector, Rotator, Transform, LinearColor, TArray<T>, TSet<T>, T[] (shorthand array), or any C++ class name (with or without * suffix)."), *TypeString);
 	return false;
 }
 
@@ -942,6 +942,21 @@ bool FBlueprintEditor::ParseContainerType(
 		}
 		OutPinType = InnerPinType;
 		OutPinType.ContainerType = EPinContainerType::Set;
+		return true;
+	}
+
+	// TODO-44: Shorthand array syntax: "T[]"  (e.g. "Vector[]", "float[]", "int[]", "Actor[]")
+	// Expand to TArray<T> and recurse.
+	if (TypeString.EndsWith(TEXT("[]")))
+	{
+		FString InnerType = TypeString.LeftChop(2);
+		FEdGraphPinType InnerPinType;
+		if (!ParsePinType(InnerType, InnerPinType, OutError))
+		{
+			return true; // Error already set
+		}
+		OutPinType = InnerPinType;
+		OutPinType.ContainerType = EPinContainerType::Array;
 		return true;
 	}
 

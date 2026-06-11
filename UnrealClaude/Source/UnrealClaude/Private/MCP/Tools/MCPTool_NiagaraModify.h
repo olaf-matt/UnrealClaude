@@ -6,6 +6,7 @@
 #include "MCP/MCPToolBase.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "NiagaraCommon.h"  // ENiagaraScriptUsage — needed for GetStageOutputNode signature
 
 class UNiagaraSystem;
 class UNiagaraScript;
@@ -46,6 +47,19 @@ private:
 	FMCPToolResult ExecuteSetModuleInput(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteCompile(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetSystemUserParam(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteGetModuleSource(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteGetEmitterProperties(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteAddSystemUserParameter(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRemoveSystemUserParameter(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteCreateScratchpadModule(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetModuleHlsl(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteCreateAssignmentModule(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRebuildScratchpadInnerGraph(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteReorderModule(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteBindModuleInput(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteConfigureDIParameter(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteAddScratchpadModuleParam(const TSharedRef<FJsonObject>& Params); // NI010
+	FMCPToolResult ExecuteDumpStageGraph(const TSharedRef<FJsonObject>& Params);           // stage wiring read-back
 
 	// --- Shared helpers ---
 
@@ -75,4 +89,21 @@ private:
 	// Find the first pin of the FNiagaraParameterMap struct type in the given direction.
 	// Used to chain module nodes via the parameter-map wire.
 	static UEdGraphPin* FindParamMapPin(UEdGraphNode* Node, EEdGraphPinDirection Direction);
+
+	// Map a stage-name string to the ENiagaraScriptUsage enum for UNiagaraNodeOutput filtering.
+	// Returns ENiagaraScriptUsage::Module (sentinel) if not recognized.
+	static ENiagaraScriptUsage StageNameToUsage(const FString& StageName);
+
+	// Find the UNiagaraNodeOutput in Graph whose GetUsage() matches Usage.
+	// Returns nullptr if not found.
+	static class UNiagaraNodeOutput* GetStageOutputNode(UNiagaraGraph* Graph, ENiagaraScriptUsage Usage);
+
+	// Walk the param-map chain backwards from OutputNode, collecting UNiagaraNodeFunctionCall
+	// nodes in order (last-in-chain first). Stops when a non-function-call node is reached.
+	static void CollectStageChainModules(UNiagaraNodeOutput* OutputNode,
+		TArray<UNiagaraNodeFunctionCall*>& OutModules);
+
+	// After remove_module: destroy any ParameterMapGet/Set nodes in Graph whose Source input
+	// pin has no connections (orphaned by the removal). Returns the count destroyed.
+	static int32 CleanupOrphanedMapNodes(UNiagaraGraph* Graph);
 };
