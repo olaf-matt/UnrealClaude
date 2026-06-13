@@ -60,6 +60,9 @@ public class UnrealClaude : ModuleRules
 				"AnimGraphRuntime",
 				// Asset saving
 				"EditorScriptingUtilities",
+				// Material graph editing (UMaterialEditingLibrary — create/connect/delete expressions,
+				// material-function editing, recompile dependents)
+				"MaterialEditor",
 				// Enhanced Input
 				"EnhancedInput",
 				// Niagara runtime (niagara_query — UNiagaraSystem, FNiagaraParameterStore)

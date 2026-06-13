@@ -34,13 +34,16 @@ FMCPToolInfo FMCPTool_SetNiagaraVariable::GetInfo() const
 		"           \"value\": {\"R\": 0.0, \"G\": 0.5, \"B\": 1.0, \"A\": 1.0} }\n"
 		"  Bool:   { \"actor_name\": \"FX_MySystem_0\", \"variable_name\": \"User.bEnabled\", \"value\": true }\n\n"
 		"The actor must have a NiagaraComponent (either be a NiagaraActor or a BP with one).\n"
-		"The variable must exist in the NiagaraSystem's exposed user parameters."
+		"The variable must exist in the NiagaraSystem's exposed user parameters - an unknown\n"
+		"name is a SILENT no-op (reports success, changes nothing), so verify the result."
 	);
 
 	Info.Parameters.Add(FMCPToolParameter(TEXT("actor_name"), TEXT("string"),
 		TEXT("Outliner label of the actor with a NiagaraComponent"), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("variable_name"), TEXT("string"),
-		TEXT("Full user parameter name, e.g. \"User.WaterDepth\" or \"WindControl.WindSpeed\""), true));
+		TEXT("Full user parameter name, with the User. prefix - e.g. \"User.WaterDepth\", \"User.WindSpeed\". "
+			 "The editor's display CATEGORY is not part of the name: a param shown as \"WindControl > WindSpeed\" "
+			 "is set as \"User.WindSpeed\". Take exact names from the system's exposed user parameters."), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("value"), TEXT("any"),
 		TEXT("Value to set: number (float/int), bool, {X,Y,Z} for vec3, or {R,G,B,A} for color"), true));
 	Info.Parameters.Add(FMCPToolParameter(TEXT("type"), TEXT("string"),
