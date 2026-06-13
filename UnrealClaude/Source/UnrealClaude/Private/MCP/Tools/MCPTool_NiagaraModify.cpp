@@ -521,6 +521,8 @@ FMCPToolResult FMCPTool_NiagaraModify::Execute(const TSharedRef<FJsonObject>& Pa
 	if (Lower == TEXT("configure_di_parameter"))         return ExecuteConfigureDIParameter(Params);
 	if (Lower == TEXT("add_scratchpad_module_param"))    return ExecuteAddScratchpadModuleParam(Params);
 	if (Lower == TEXT("dump_stage_graph"))               return ExecuteDumpStageGraph(Params);
+	if (Lower == TEXT("get_stage_properties"))           return ExecuteGetStageProperties(Params);
+	if (Lower == TEXT("set_stage_execute_behavior"))     return ExecuteSetStageExecuteBehavior(Params);
 
 	return FMCPToolResult::Error(FString::Printf(
 		TEXT("Unknown operation '%s'. Valid: list_emitters, list_stages, list_modules, "
@@ -4050,5 +4052,111 @@ FMCPToolResult FMCPTool_NiagaraModify::ExecuteDumpStageGraph(const TSharedRef<FJ
 
 	return FMCPToolResult::Success(
 		FString::Printf(TEXT("dump_stage_graph: %d node(s) in stage '%s'."), NodesArr.Num(), *StageName),
+		Result);
+}
+
+// ============================================================
+//  get_stage_properties / set_stage_execute_behavior
+// ============================================================
+//
+// Read + write GPU simulation stage settings (UNiagaraSimulationStageGeneric).
+// Motivation (2026-06-11): FX_OceanWater's InitialSpectrum stage runs OnSimulationReset, which
+// bakes ALL wave parameters (WindSpeed, Amplitude, ...) at activation. Flipping it to Always
+// makes the spectrum regenerate per frame → live-tunable sea state, smooth weather transitions.
+//
+static UNiagaraSimulationStageGeneric* FindGenericSimStage(
+	FVersionedNiagaraEmitterData* Data, const FString& StageName)
+{
+	if (!Data) return nullptr;
+	for (UNiagaraSimulationStageBase* SimStage : Data->GetSimulationStages())
+	{
+		if (SimStage && SimStage->SimulationStageName.ToString().Equals(StageName, ESearchCase::IgnoreCase))
+			return Cast<UNiagaraSimulationStageGeneric>(SimStage);
+	}
+	return nullptr;
+}
+
+FMCPToolResult FMCPTool_NiagaraModify::ExecuteGetStageProperties(const TSharedRef<FJsonObject>& Params)
+{
+	FString SystemPath, EmitterName, StageName;
+	{
+		TOptional<FMCPToolResult> Err;
+		if (!ExtractRequiredString(Params, TEXT("system_path"),  SystemPath,  Err)) return Err.GetValue();
+		if (!ExtractRequiredString(Params, TEXT("emitter_name"), EmitterName, Err)) return Err.GetValue();
+		if (!ExtractRequiredString(Params, TEXT("stage"),        StageName,   Err)) return Err.GetValue();
+	}
+
+	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
+	if (!System) return FMCPToolResult::Error(FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+
+	int32 HandleIdx = INDEX_NONE;
+	FVersionedNiagaraEmitterData* EmData = GetEmitterDataByName(System, EmitterName, HandleIdx);
+	if (!EmData) return FMCPToolResult::Error(FString::Printf(TEXT("Emitter '%s' not found."), *EmitterName));
+
+	UNiagaraSimulationStageGeneric* Stage = FindGenericSimStage(EmData, StageName);
+	if (!Stage) return FMCPToolResult::Error(FString::Printf(
+		TEXT("GPU simulation stage '%s' not found (only generic sim stages supported)."), *StageName));
+
+	const TCHAR* BehaviorStr =
+		Stage->ExecuteBehavior == ENiagaraSimStageExecuteBehavior::Always ? TEXT("Always") :
+		Stage->ExecuteBehavior == ENiagaraSimStageExecuteBehavior::OnSimulationReset ? TEXT("OnSimulationReset") :
+		TEXT("NotOnSimulationReset");
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetStringField(TEXT("stage"),             StageName);
+	Result->SetStringField(TEXT("execute_behavior"),  BehaviorStr);
+	Result->SetStringField(TEXT("iteration_source"),
+		Stage->IterationSource == ENiagaraIterationSource::Particles ? TEXT("Particles") : TEXT("DataInterface"));
+	Result->SetBoolField  (TEXT("enabled"),           Stage->bEnabled);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Stage '%s': execute_behavior=%s."), *StageName, BehaviorStr), Result);
+}
+
+FMCPToolResult FMCPTool_NiagaraModify::ExecuteSetStageExecuteBehavior(const TSharedRef<FJsonObject>& Params)
+{
+	FString SystemPath, EmitterName, StageName, BehaviorStr;
+	{
+		TOptional<FMCPToolResult> Err;
+		if (!ExtractRequiredString(Params, TEXT("system_path"),  SystemPath,  Err)) return Err.GetValue();
+		if (!ExtractRequiredString(Params, TEXT("emitter_name"), EmitterName, Err)) return Err.GetValue();
+		if (!ExtractRequiredString(Params, TEXT("stage"),        StageName,   Err)) return Err.GetValue();
+		if (!ExtractRequiredString(Params, TEXT("value"),        BehaviorStr, Err)) return Err.GetValue();
+	}
+
+	ENiagaraSimStageExecuteBehavior NewBehavior;
+	const FString Lower = BehaviorStr.ToLower();
+	if      (Lower == TEXT("always"))                 NewBehavior = ENiagaraSimStageExecuteBehavior::Always;
+	else if (Lower == TEXT("onsimulationreset"))      NewBehavior = ENiagaraSimStageExecuteBehavior::OnSimulationReset;
+	else if (Lower == TEXT("notonsimulationreset"))   NewBehavior = ENiagaraSimStageExecuteBehavior::NotOnSimulationReset;
+	else return FMCPToolResult::Error(
+		TEXT("Invalid value. Use: Always | OnSimulationReset | NotOnSimulationReset"));
+
+	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
+	if (!System) return FMCPToolResult::Error(FString::Printf(TEXT("NiagaraSystem not found: %s"), *SystemPath));
+
+	int32 HandleIdx = INDEX_NONE;
+	FVersionedNiagaraEmitterData* EmData = GetEmitterDataByName(System, EmitterName, HandleIdx);
+	if (!EmData) return FMCPToolResult::Error(FString::Printf(TEXT("Emitter '%s' not found."), *EmitterName));
+
+	UNiagaraSimulationStageGeneric* Stage = FindGenericSimStage(EmData, StageName);
+	if (!Stage) return FMCPToolResult::Error(FString::Printf(
+		TEXT("GPU simulation stage '%s' not found (only generic sim stages supported)."), *StageName));
+
+	const ENiagaraSimStageExecuteBehavior OldBehavior = Stage->ExecuteBehavior;
+	Stage->Modify();
+	Stage->ExecuteBehavior = NewBehavior;
+	Stage->MarkPackageDirty();
+	System->MarkPackageDirty();
+	System->RequestCompile(false);
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetStringField(TEXT("stage"),        StageName);
+	Result->SetStringField(TEXT("old_behavior"), OldBehavior == ENiagaraSimStageExecuteBehavior::Always ? TEXT("Always") :
+		OldBehavior == ENiagaraSimStageExecuteBehavior::OnSimulationReset ? TEXT("OnSimulationReset") : TEXT("NotOnSimulationReset"));
+	Result->SetStringField(TEXT("new_behavior"), BehaviorStr);
+
+	return FMCPToolResult::Success(
+		FString::Printf(TEXT("Stage '%s' execute_behavior set to '%s'; recompile requested."), *StageName, *BehaviorStr),
 		Result);
 }

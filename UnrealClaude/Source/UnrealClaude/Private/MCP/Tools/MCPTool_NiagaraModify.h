@@ -60,6 +60,8 @@ private:
 	FMCPToolResult ExecuteConfigureDIParameter(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddScratchpadModuleParam(const TSharedRef<FJsonObject>& Params); // NI010
 	FMCPToolResult ExecuteDumpStageGraph(const TSharedRef<FJsonObject>& Params);           // stage wiring read-back
+	FMCPToolResult ExecuteGetStageProperties(const TSharedRef<FJsonObject>& Params);       // sim stage settings read
+	FMCPToolResult ExecuteSetStageExecuteBehavior(const TSharedRef<FJsonObject>& Params);  // sim stage ExecuteBehavior write
 
 	// --- Shared helpers ---
 
