@@ -38,6 +38,7 @@
 #include "Tools/MCPTool_SetNiagaraVariable.h"
 #include "Tools/MCPTool_SampleRenderTarget.h"
 #include "Tools/MCPTool_BlueprintTransaction.h"
+#include "Tools/MCPTool_Widget.h"
 
 // Task queue tools
 #include "Tools/MCPTool_TaskSubmit.h"
@@ -128,6 +129,9 @@ void FMCPToolRegistry::RegisterBuiltinTools()
 
 	// Blueprint transaction (batch graph-wiring tool)
 	RegisterTool(MakeShared<FMCPTool_BlueprintTransaction>());
+
+	// UMG widget-tree authoring (BP002 — add/remove/arrange widgets + read-back)
+	RegisterTool(MakeShared<FMCPTool_Widget>());
 
 	// Create and register async task queue tools
 	// Task queue takes a raw pointer since the registry always outlives it

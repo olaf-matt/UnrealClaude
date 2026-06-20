@@ -21,7 +21,6 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HttpServerModule.h"
-
 DEFINE_LOG_CATEGORY(LogUnrealClaude);
 
 #define LOCTEXT_NAMESPACE "FUnrealClaudeModule"
@@ -32,7 +31,7 @@ static const FName ClaudeActivityTabName("ClaudeActivity");
 void FUnrealClaudeModule::StartupModule()
 {
 	UE_LOG(LogUnrealClaude, Warning, TEXT("=== UnrealClaude BUILD 20260107-1450 THREAD_TESTS_DISABLED ==="));
-	
+
 	// Register commands
 	FUnrealClaudeCommands::Register();
 	

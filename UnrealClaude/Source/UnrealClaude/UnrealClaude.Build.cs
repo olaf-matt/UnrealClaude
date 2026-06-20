@@ -65,6 +65,10 @@ public class UnrealClaude : ModuleRules
 				"MaterialEditor",
 				// Enhanced Input
 				"EnhancedInput",
+				// UMG widget-tree authoring (widget tool — USlider/UTextBlock/UPanelWidget/UWidgetTree;
+				// UMGEditor for UWidgetBlueprint). UnrealEd (public dep) provides WidgetTree/BaseWidgetBlueprint.
+				"UMG",
+				"UMGEditor",
 				// Niagara runtime (niagara_query — UNiagaraSystem, FNiagaraParameterStore)
 				"Niagara",
 				// Niagara editor (niagara_modify — UNiagaraGraph, UNiagaraNodeFunctionCall,
