@@ -3,6 +3,7 @@
 #include "UnrealClaudeModule.h"
 #include "UnrealClaudeCommands.h"
 #include "ClaudeEditorWidget.h"
+#include "Widgets/SClaudeMCPDashboard.h"
 #include "ClaudeCodeRunner.h"
 #include "ClaudeSubsystem.h"
 #include "ScriptExecutionManager.h"
@@ -20,17 +21,17 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HttpServerModule.h"
-
 DEFINE_LOG_CATEGORY(LogUnrealClaude);
 
 #define LOCTEXT_NAMESPACE "FUnrealClaudeModule"
 
 static const FName ClaudeTabName("ClaudeAssistant");
+static const FName ClaudeActivityTabName("ClaudeActivity");
 
 void FUnrealClaudeModule::StartupModule()
 {
 	UE_LOG(LogUnrealClaude, Warning, TEXT("=== UnrealClaude BUILD 20260107-1450 THREAD_TESTS_DISABLED ==="));
-	
+
 	// Register commands
 	FUnrealClaudeCommands::Register();
 	
@@ -41,7 +42,8 @@ void FUnrealClaudeModule::StartupModule()
 		FUnrealClaudeCommands::Get().OpenClaudePanel,
 		FExecuteAction::CreateLambda([]()
 		{
-			FGlobalTabmanager::Get()->TryInvokeTab(ClaudeTabName);
+			// Ctrl+Shift+C opens the activity dashboard
+			FGlobalTabmanager::Get()->TryInvokeTab(ClaudeActivityTabName);
 		}),
 		FCanExecuteAction()
 	);
@@ -122,20 +124,37 @@ void FUnrealClaudeModule::StartupModule()
 		})
 	);
 
-	// Register the tab spawner
+	// ── MCP Activity Dashboard (primary tab — auto-invoked on startup) ──────────
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		ClaudeActivityTabName,
+		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs& Args) -> TSharedRef<SDockTab>
+		{
+			return SNew(SDockTab)
+				.TabRole(ETabRole::NomadTab)
+				.Label(LOCTEXT("ActivityTabTitle", "MCP Activity"))
+				[
+					SNew(SClaudeMCPDashboard)
+				];
+		}))
+		.SetDisplayName(LOCTEXT("ActivityTabTitle", "MCP Activity"))
+		.SetTooltipText(LOCTEXT("ActivityTabTooltip", "Live log of MCP tool calls, durations, and per-tool stats"))
+		.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
+		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Visible"));
+
+	// ── Claude Chat (secondary tab — dormant, opens only on user request) ─────
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
 		ClaudeTabName,
 		FOnSpawnTab::CreateLambda([](const FSpawnTabArgs& Args) -> TSharedRef<SDockTab>
 		{
 			return SNew(SDockTab)
 				.TabRole(ETabRole::NomadTab)
-				.Label(LOCTEXT("ClaudeTabTitle", "Claude Assistant"))
+				.Label(LOCTEXT("ClaudeTabTitle", "Claude Chat"))
 				[
 					SNew(SClaudeEditorWidget)
 				];
 		}))
-		.SetDisplayName(LOCTEXT("ClaudeTabTitle", "Claude Assistant"))
-		.SetTooltipText(LOCTEXT("ClaudeTabTooltip", "Open the Claude AI Assistant for UE5.7 development help"))
+		.SetDisplayName(LOCTEXT("ClaudeTabTitle", "Claude Chat"))
+		.SetTooltipText(LOCTEXT("ClaudeTabTooltip", "Claude AI chat assistant (requires Claude CLI)"))
 		.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
 		.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Help"));
 	
@@ -179,6 +198,7 @@ void FUnrealClaudeModule::ShutdownModule()
 	FUnrealClaudeCommands::Unregister();
 
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ClaudeTabName);
+	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ClaudeActivityTabName);
 }
 
 FUnrealClaudeModule& FUnrealClaudeModule::Get()

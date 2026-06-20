@@ -16,6 +16,7 @@
 #include "K2Node_BreakStruct.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_Select.h"
+#include "K2Node_Self.h"
 #include "EdGraphSchema_K2.h"
 #include "BlueprintEditor.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -24,6 +25,9 @@
 #include "Kismet/KismetStringLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "HAL/PlatformAtomics.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 
 // Static member initialization
 volatile int32 FBlueprintGraphEditor::NodeIdCounter = 0;
@@ -218,6 +222,77 @@ UEdGraphNode* FBlueprintGraphEditor::CreateNode(
 					*TargetVariable, *FunctionName, *VarError);
 			}
 		}
+
+		// Auto-wire a GetSelf node to the Object pin for timer functions or
+		// when the caller explicitly requests it via target_object:"self".
+		// Covers SetTimerByFunctionName and the other KismetSystemLibrary timer ops
+		// that require an Object context to locate the named function.
+		FString TargetObject;
+		if (NodeParams.IsValid()) NodeParams->TryGetStringField(TEXT("target_object"), TargetObject);
+
+		static const TCHAR* SelfObjectFunctions[] = {
+			// "Set Timer by Function Name" — actual UFUNCTION is K2_SetTimer
+			TEXT("K2_SetTimer"),
+			// "Set Timer for Next Tick by Function Name"
+			TEXT("K2_SetTimerForNextTick"),
+			TEXT("K2_ClearTimer"),
+			TEXT("K2_PauseTimer"),
+			TEXT("K2_UnPauseTimer"),
+			TEXT("K2_IsTimerActive"),
+			TEXT("K2_IsTimerPaused"),
+			TEXT("K2_TimerExists"),
+			TEXT("K2_GetTimerElapsedTime"),
+			TEXT("K2_GetTimerRemainingTime"),
+			nullptr
+		};
+		bool bWireSelfToObject = TargetObject.Equals(TEXT("self"), ESearchCase::IgnoreCase);
+		if (!bWireSelfToObject)
+		{
+			for (int32 i = 0; SelfObjectFunctions[i]; ++i)
+			{
+				if (FunctionName.Equals(SelfObjectFunctions[i], ESearchCase::IgnoreCase))
+				{
+					bWireSelfToObject = true;
+					break;
+				}
+			}
+		}
+
+		if (NewNode && bWireSelfToObject)
+		{
+			UEdGraphNode* SelfNode = CreateSelfNode(Graph, PosX - 200, PosY + 120);
+			if (SelfNode)
+			{
+				UEdGraphPin* SelfOutPin = nullptr;
+				for (UEdGraphPin* Pin : SelfNode->Pins)
+				{
+					if (Pin && Pin->Direction == EGPD_Output
+						&& Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+					{
+						SelfOutPin = Pin;
+						break;
+					}
+				}
+
+				UEdGraphPin* ObjectPin = FindPinByName(NewNode, TEXT("Object"), EGPD_Input);
+				if (!ObjectPin) ObjectPin = FindPinByName(NewNode, TEXT("object"), EGPD_Input);
+
+				if (SelfOutPin && ObjectPin)
+				{
+					const UEdGraphSchema* Schema = Graph->GetSchema();
+					if (Schema)
+						Schema->TryCreateConnection(SelfOutPin, ObjectPin);
+					else
+						SelfOutPin->MakeLinkTo(ObjectPin);
+				}
+				else
+				{
+					UE_LOG(LogUnrealClaude, Warning,
+						TEXT("target_object:'self' — Object pin not found on '%s' (tried 'Object', 'object')"),
+						*FunctionName);
+				}
+			}
+		}
 	}
 	else if (NodeType.Equals(TEXT("Branch"), ESearchCase::IgnoreCase) || NodeType.Equals(TEXT("IfThenElse"), ESearchCase::IgnoreCase))
 	{
@@ -372,6 +447,34 @@ bool FBlueprintGraphEditor::DeleteNode(UEdGraph* Graph, const FString& NodeId, F
 	}
 
 	UE_LOG(LogUnrealClaude, Log, TEXT("Deleted node '%s'"), *NodeId);
+	return true;
+}
+
+bool FBlueprintGraphEditor::MoveNode(UEdGraph* Graph, const FString& NodeId, int32 PosX, int32 PosY, FString& OutError)
+{
+	if (!Graph)
+	{
+		OutError = TEXT("Graph is null");
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeById(Graph, NodeId);
+	if (!Node)
+	{
+		OutError = FString::Printf(TEXT("Node '%s' not found"), *NodeId);
+		return false;
+	}
+
+	Node->NodePosX = PosX;
+	Node->NodePosY = PosY;
+
+	UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+	if (Blueprint)
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	}
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Moved node '%s' to (%d, %d)"), *NodeId, PosX, PosY);
 	return true;
 }
 
@@ -840,6 +943,15 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	UFunction* Function = nullptr;
 	UClass* FunctionOwner = nullptr;
 
+	// ResolvedFunctionName tracks the actual UFUNCTION name to use.
+	// Many Actor/Component methods have a "K2_" prefixed UFUNCTION name that differs from the
+	// user-facing C++ name (e.g. "GetActorLocation" → "K2_GetActorLocation").
+	// We update this when the K2_ fallback is used so SetExternalMember gets the right name.
+	FString ResolvedFunctionName = FunctionName;
+
+	// Track whether FunctionOwner came from a Blueprint-generated class
+	bool bIsBlueprintClass = false;
+
 	// Try to find class by name
 	if (!TargetClass.IsEmpty())
 	{
@@ -869,6 +981,15 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 				FunctionOwner = UGameplayStatics::StaticClass();
 			}
 		}
+		// If C++ lookup missed, try Blueprint asset registry (cross-Blueprint calls)
+		if (!FunctionOwner)
+		{
+			FunctionOwner = ResolveBlueprintClassByName(TargetClass);
+			if (FunctionOwner)
+			{
+				bIsBlueprintClass = true;
+			}
+		}
 	}
 	else
 	{
@@ -879,6 +1000,23 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	if (FunctionOwner)
 	{
 		Function = FunctionOwner->FindFunctionByName(FName(*FunctionName));
+
+		// Many Actor/ActorComponent methods are exposed to Blueprint under a "K2_" prefix
+		// (e.g. GetActorLocation → K2_GetActorLocation, SetActorLocation → K2_SetActorLocation,
+		//  GetActorRotation → K2_GetActorRotation, GetActorTransform → K2_GetActorTransform).
+		// Try the prefixed name before falling through to library searches.
+		if (!Function && !TargetClass.IsEmpty())
+		{
+			FString K2Name = TEXT("K2_") + FunctionName;
+			UFunction* K2Func = FunctionOwner->FindFunctionByName(FName(*K2Name));
+			if (K2Func)
+			{
+				Function = K2Func;
+				ResolvedFunctionName = K2Name;
+				UE_LOG(LogUnrealClaude, Log, TEXT("Resolved '%s' → '%s' via K2_ prefix on class '%s'"),
+					*FunctionName, *K2Name, *TargetClass);
+			}
+		}
 	}
 
 	// If not found in specified class, search common libraries
@@ -923,15 +1061,61 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 			if (!bIsSelfCall && Blueprint->GeneratedClass)
 			{
 				Function = Blueprint->GeneratedClass->FindFunctionByName(FName(*FunctionName));
+
+				// K2_ prefix fallback: inherited Actor/Component methods are often exposed
+				// to Blueprint under a "K2_" prefix (e.g. SetActorLocation → K2_SetActorLocation,
+				// SetActorRotation → K2_SetActorRotation). Try the prefixed name on the
+				// Generated Class so callers can use the user-facing name without the prefix.
+				if (!Function)
+				{
+					FString K2Name = TEXT("K2_") + FunctionName;
+					UFunction* K2Func = Blueprint->GeneratedClass->FindFunctionByName(FName(*K2Name));
+					if (K2Func)
+					{
+						Function = K2Func;
+						ResolvedFunctionName = K2Name;
+						bIsSelfCall = true; // SetSelfMember so no explicit Target pin is exposed
+						UE_LOG(LogUnrealClaude, Log,
+							TEXT("Self-call: resolved '%s' → '%s' via K2_ prefix on GeneratedClass"),
+							*FunctionName, *K2Name);
+					}
+				}
 			}
 		}
 	}
 
-	if (!Function && !bIsSelfCall)
+	// For cross-Blueprint calls: if the function isn't on the compiled GeneratedClass yet
+	// (target BP not compiled), check FunctionGraphs by name as a fallback.
+	// The node will still be created — it resolves at the caller BP's next compile.
+	bool bFoundInGraphsOnly = false;
+	if (!Function && !bIsSelfCall && bIsBlueprintClass && FunctionOwner)
+	{
+		UBlueprint* TargetBP = Cast<UBlueprint>(FunctionOwner->ClassGeneratedBy);
+		if (TargetBP)
+		{
+			for (UEdGraph* FuncGraph : TargetBP->FunctionGraphs)
+			{
+				if (FuncGraph && FuncGraph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+				{
+					bFoundInGraphsOnly = true;
+					UE_LOG(LogUnrealClaude, Warning,
+						TEXT("Function '%s' found in '%s' FunctionGraphs but not on compiled class — "
+						     "target BP may need recompiling. Node created with unresolved reference."),
+						*FunctionName, *TargetClass);
+					break;
+				}
+			}
+		}
+	}
+
+	if (!Function && !bIsSelfCall && !bFoundInGraphsOnly)
 	{
 		OutError = FString::Printf(
-			TEXT("Function '%s' not found. Searched: KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, GameplayStatics, this Blueprint's own functions. "
-			     "For C++ instance methods supply target_class (e.g. 'MaterialInstanceDynamic', 'NiagaraComponent', 'ActorComponent')."),
+			TEXT("Function '%s' not found. Searched: KismetSystemLibrary, KismetMathLibrary, KismetArrayLibrary, "
+			     "GameplayStatics, this Blueprint's own functions, and the Blueprint asset registry. "
+			     "For C++ instance methods supply target_class (e.g. 'MaterialInstanceDynamic', 'NiagaraComponent'). "
+			     "For cross-Blueprint calls supply target_class with the BP asset name (e.g. 'BP_WeatherSystem'). "
+			     "Ensure the target Blueprint is compiled before adding cross-BP function nodes."),
 			*FunctionName);
 		return nullptr;
 	}
@@ -953,7 +1137,25 @@ UEdGraphNode* FBlueprintGraphEditor::CreateCallFunctionNode(
 	UK2Node_CallFunction* CallNode = NodeCreator.CreateNode();
 	if (bIsSelfCall)
 	{
-		CallNode->FunctionReference.SetSelfMember(FName(*FunctionName));
+		// ResolvedFunctionName may carry a K2_ prefix when the Blueprint-callable
+		// wrapper differs from the user-facing C++ name (e.g. "K2_SetActorLocation").
+		CallNode->FunctionReference.SetSelfMember(FName(*ResolvedFunctionName));
+	}
+	else if (!TargetClass.IsEmpty() && FunctionOwner)
+	{
+		// Explicit target class — C++ instance method OR Blueprint-generated class.
+		//
+		// SetExternalMember is required in both cases to expose a typed Target pin,
+		// so the caller can wire a reference to a specific instance.
+		//
+		// SetFromFunction would call SetFromField(Function, bSelfContext=IsActorBased),
+		// which for Actor-based Blueprints suppresses the Target pin and treats the call
+		// as a self-call — making functions like GetActorLocation / GetActorRotation
+		// impossible to invoke on an external actor reference from another Actor BP.
+		//
+		// ResolvedFunctionName may differ from FunctionName when the K2_ prefix was applied
+		// (e.g. "GetActorLocation" → "K2_GetActorLocation").
+		CallNode->FunctionReference.SetExternalMember(FName(*ResolvedFunctionName), FunctionOwner);
 	}
 	else
 	{
@@ -1064,7 +1266,7 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableGetNode(
 		return nullptr;
 	}
 
-	// Verify variable exists
+	// Verify variable exists — check member variables first, then SCS component variables
 	FName VarName(*VariableName);
 	bool bFound = false;
 	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
@@ -1076,9 +1278,26 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableGetNode(
 		}
 	}
 
+	// SCS component variables (added via Components panel or add_component MCP op) live in
+	// SimpleConstructionScript->GetAllNodes(), NOT in NewVariables.  The Blueprint compiler
+	// exposes them as properties on the Generated Class, so SetSelfMember still works.
+	if (!bFound && Blueprint->SimpleConstructionScript)
+	{
+		for (USCS_Node* SCSNode : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (SCSNode && SCSNode->GetVariableName() == VarName)
+			{
+				bFound = true;
+				break;
+			}
+		}
+	}
+
 	if (!bFound)
 	{
-		OutError = FString::Printf(TEXT("Variable '%s' not found in Blueprint"), *VariableName);
+		OutError = FString::Printf(
+			TEXT("Variable '%s' not found in Blueprint (searched member variables and SCS components)"),
+			*VariableName);
 		return nullptr;
 	}
 
@@ -1140,6 +1359,16 @@ UEdGraphNode* FBlueprintGraphEditor::CreateVariableSetNode(
 	NodeCreator.Finalize();
 
 	return SetNode;
+}
+
+UEdGraphNode* FBlueprintGraphEditor::CreateSelfNode(UEdGraph* Graph, int32 PosX, int32 PosY)
+{
+	FGraphNodeCreator<UK2Node_Self> NodeCreator(*Graph);
+	UK2Node_Self* SelfNode = NodeCreator.CreateNode();
+	SelfNode->NodePosX = PosX;
+	SelfNode->NodePosY = PosY;
+	NodeCreator.Finalize();
+	return SelfNode;
 }
 
 UEdGraphNode* FBlueprintGraphEditor::CreateSequenceNode(
@@ -1249,7 +1478,51 @@ UClass* FBlueprintGraphEditor::ResolveClassByName(const FString& ClassName)
 	}
 
 	// Slow scan across all currently-loaded packages
-	return FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None);
+	if (UClass* Class = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None))
+	{
+		return Class;
+	}
+
+	// Blueprint-generated classes are named "ClassName_C" — try that suffix so callers
+	// can pass bare asset names like "BP_WeatherSystem" instead of "BP_WeatherSystem_C".
+	FString WithSuffix = ClassName + TEXT("_C");
+	if (UClass* Class = FindFirstObject<UClass>(*WithSuffix, EFindFirstObjectOptions::None))
+	{
+		return Class;
+	}
+
+	// Last resort: Asset Registry search (finds BPs not yet loaded into memory).
+	return ResolveBlueprintClassByName(ClassName);
+}
+
+UClass* FBlueprintGraphEditor::ResolveBlueprintClassByName(const FString& ShortName)
+{
+	if (ShortName.IsEmpty()) return nullptr;
+
+	IAssetRegistry* Registry = IAssetRegistry::Get();
+	if (!Registry) return nullptr;
+
+	// Search all Blueprint-derived asset types (AnimBlueprint, WidgetBlueprint, etc.)
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.bRecursiveClasses = true;
+
+	TArray<FAssetData> Assets;
+	Registry->GetAssets(Filter, Assets);
+
+	for (const FAssetData& Asset : Assets)
+	{
+		if (!Asset.AssetName.ToString().Equals(ShortName, ESearchCase::IgnoreCase))
+			continue;
+
+		UBlueprint* BP = Cast<UBlueprint>(Asset.GetAsset());
+		if (BP && BP->GeneratedClass)
+		{
+			return BP->GeneratedClass;
+		}
+	}
+
+	return nullptr;
 }
 
 UScriptStruct* FBlueprintGraphEditor::ResolveStructByName(const FString& StructName)

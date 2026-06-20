@@ -62,6 +62,62 @@ public:
 		FString& OutError
 	);
 
+	/**
+	 * Set the default value of a Blueprint variable (primitive types).
+	 * Accepts the same string format UE serializes internally:
+	 *   float  → "25.0"
+	 *   bool   → "true" or "false"
+	 *   int    → "42"
+	 *   string → "Hello"
+	 *   Vector → "(X=0.0,Y=0.0,Z=0.0)"
+	 * Object-reference variables cannot have meaningful defaults set this way.
+	 */
+	static bool SetVariableDefault(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		const FString& DefaultValue,
+		FString& OutError
+	);
+
+	/**
+	 * Set or clear the Expose on Spawn flag on a Blueprint variable.
+	 * When true, the variable appears as a pin on SpawnActor/ConstructObject nodes.
+	 */
+	static bool SetVariableExposeOnSpawn(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		bool bExposeOnSpawn,
+		FString& OutError
+	);
+
+	/**
+	 * Rename a Blueprint variable, updating all graph references.
+	 */
+	static bool RenameVariable(
+		UBlueprint* Blueprint,
+		const FString& OldName,
+		const FString& NewName,
+		FString& OutError
+	);
+
+	/**
+	 * Set or clear the Instance Editable flag on a Blueprint variable.
+	 * When bInstanceEditable=true the variable appears in the Details panel for level instances
+	 * and its value is serialized per-instance. When false (the default for new variables),
+	 * set_property calls on level instances are silently discarded.
+	 * @param Blueprint       - Blueprint to modify
+	 * @param VariableName    - Name of the variable
+	 * @param bInstanceEditable - true to enable, false to disable
+	 * @param OutError        - Error message if failed
+	 * @return true if successful
+	 */
+	static bool SetVariableInstanceEditable(
+		UBlueprint* Blueprint,
+		const FString& VariableName,
+		bool bInstanceEditable,
+		FString& OutError
+	);
+
 	// ===== Function Management =====
 
 	/**
@@ -165,6 +221,57 @@ public:
 	 * @return true if valid
 	 */
 	static bool ValidateFunctionName(const FString& FunctionName, FString& OutError);
+
+	// ===== Component Management =====
+
+	/**
+	 * Add a component to a Blueprint's SimpleConstructionScript.
+	 * @param ComponentClassName  C++ class name without U prefix: "NiagaraComponent", "StaticMeshComponent", etc.
+	 * @param ComponentName       Variable name for the component (e.g. "WaterNiagara", "DeckMesh")
+	 * @param AssetPath           Optional asset path to assign (e.g. "/Game/Blueprints/ShallowWater/FX_ShallowWater")
+	 */
+	static bool AddComponent(
+		UBlueprint* Blueprint,
+		const FString& ComponentClassName,
+		const FString& ComponentName,
+		const FString& AssetPath,
+		FString& OutError
+	);
+
+	/**
+	 * Remove a component from a Blueprint's SimpleConstructionScript by variable name.
+	 */
+	static bool RemoveComponent(
+		UBlueprint* Blueprint,
+		const FString& ComponentName,
+		FString& OutError
+	);
+
+	/**
+	 * Set a property on a component template in a Blueprint's SimpleConstructionScript.
+	 * For object reference properties (mesh, asset), pass the asset path.
+	 * For primitive properties, pass the value as string (same format as UE serializes).
+	 */
+	static bool SetComponentProperty(
+		UBlueprint* Blueprint,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FString& Value,
+		FString& OutError
+	);
+
+	// ===== Blueprint Class Management =====
+
+	/**
+	 * Make a Blueprint implement a Blueprint Interface.
+	 * Creates empty function stubs for all interface functions.
+	 * @param InterfaceName  Short name of the interface, e.g. "BPI_WindReceiver" (with or without _C suffix)
+	 */
+	static bool AddInterface(
+		UBlueprint* Blueprint,
+		const FString& InterfaceName,
+		FString& OutError
+	);
 
 private:
 	// Constants

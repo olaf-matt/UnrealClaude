@@ -60,8 +60,24 @@ public class UnrealClaude : ModuleRules
 				"AnimGraphRuntime",
 				// Asset saving
 				"EditorScriptingUtilities",
+				// Material graph editing (UMaterialEditingLibrary — create/connect/delete expressions,
+				// material-function editing, recompile dependents)
+				"MaterialEditor",
 				// Enhanced Input
-				"EnhancedInput"
+				"EnhancedInput",
+				// UMG widget-tree authoring (widget tool — USlider/UTextBlock/UPanelWidget/UWidgetTree;
+				// UMGEditor for UWidgetBlueprint). UnrealEd (public dep) provides WidgetTree/BaseWidgetBlueprint.
+				"UMG",
+				"UMGEditor",
+				// Niagara runtime (niagara_query — UNiagaraSystem, FNiagaraParameterStore)
+				"Niagara",
+				// Niagara editor (niagara_modify — UNiagaraGraph, UNiagaraNodeFunctionCall,
+				// UNiagaraScriptSource, UNiagaraNodeOutput, FNiagaraEditorUtilities)
+				"NiagaraEditor",
+				// RHI + RenderCore (for sample_render_target_2d_array —
+				// FRHITexture, FReadSurfaceDataFlags, ENQUEUE_RENDER_COMMAND, FlushRenderingCommands)
+				"RHI",
+				"RenderCore"
 			}
 		);
 

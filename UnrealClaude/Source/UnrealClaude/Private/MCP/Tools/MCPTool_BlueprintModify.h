@@ -12,6 +12,7 @@
  *   - create: Create a new Blueprint
  *   - add_variable: Add a variable to a Blueprint
  *   - remove_variable: Remove a variable from a Blueprint
+ *   - set_variable_instance_editable: Enable/disable Instance Editable flag on a variable
  *   - add_function: Add an empty function to a Blueprint
  *   - add_function_input: Add an input pin to an existing function (Interface blueprints only)
  *   - remove_function: Remove a function from a Blueprint
@@ -20,6 +21,7 @@
  *   - add_node: Add a single node to a graph
  *   - add_nodes: Batch add multiple nodes with connections
  *   - delete_node: Remove a node from a graph
+ *   - move_node: Reposition a node without touching connections
  *
  * Level 4 Operations (Connections):
  *   - connect_pins: Connect two pins
@@ -38,21 +40,32 @@ public:
 		Info.Description = TEXT(
 			"Create and modify Blueprints programmatically. Auto-compiles after each operation.\n\n"
 			"OPERATION → REQUIRED PARAMS:\n"
-			"  create             → package_path, blueprint_name, parent_class\n"
-			"  add_variable       → blueprint_path, variable_name, variable_type\n"
-			"  remove_variable    → blueprint_path, variable_name\n"
-			"  add_function       → blueprint_path, function_name [, inputs]\n"
-			"  add_function_input → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
-			"  remove_function    → blueprint_path, function_name\n"
+			"  create                         → package_path, blueprint_name, parent_class\n"
+			"  add_variable                   → blueprint_path, variable_name, variable_type\n"
+			"  remove_variable                → blueprint_path, variable_name\n"
+			"  set_variable_instance_editable → blueprint_path, variable_name, instance_editable\n"
+			"  set_variable_default           → blueprint_path, variable_name, default_value (string)\n"
+			"  set_variable_expose_on_spawn   → blueprint_path, variable_name, expose_on_spawn (bool)\n"
+			"  rename_variable                → blueprint_path, variable_name, new_name\n"
+			"  add_function                   → blueprint_path, function_name [, inputs]\n"
+			"  add_function_input             → blueprint_path, function_name, input_name, input_type  (Interface BPs only)\n"
+			"  remove_function                → blueprint_path, function_name\n"
+			"  add_component     → blueprint_path, component_class, component_name [, asset]\n"
+			"  remove_component  → blueprint_path, component_name\n"
+			"  set_component_property → blueprint_path, component_name, property_name, value\n"
+			"  add_interface     → blueprint_path, interface_name\n"
 			"  add_node        → blueprint_path, node_type [, graph_name, is_function_graph, node_params, pos_x, pos_y]\n"
 			"  add_nodes       → blueprint_path, nodes[] [, connections[], graph_name, is_function_graph]\n"
 			"  delete_node     → blueprint_path, node_id [, graph_name, is_function_graph]\n"
+			"  move_node       → blueprint_path, node_id, pos_x, pos_y [, graph_name, is_function_graph]\n"
 			"  connect_pins    → blueprint_path, source_node_id, target_node_id [, source_pin, target_pin, graph_name, is_function_graph]\n"
 			"  disconnect_pins → blueprint_path, source_node_id, source_pin, target_node_id, target_pin\n"
 			"  set_pin_value   → blueprint_path, node_id, pin_name, pin_value [, graph_name, is_function_graph]\n\n"
 			"NODE TYPES and node_params:\n"
 			"  CallFunction  {\"function\":\"MyFunc\"}                               self-call\n"
 			"                {\"function\":\"GetAllActorsOfClass\",\"target_class\":\"GameplayStatics\"}  library call\n"
+			"                {\"function\":\"SetTimerByFunctionName\"}               Object pin auto-wired to self\n"
+			"                {\"function\":\"MyFunc\",\"target_object\":\"self\"}      explicit self Object pin for any function\n"
 			"  VariableGet   {\"variable\":\"MyVar\"}\n"
 			"  VariableSet   {\"variable\":\"MyVar\"}\n"
 			"  Event         {\"event\":\"BeginPlay\"}   or  {\"event\":\"Tick\"}\n"
@@ -61,7 +74,7 @@ public:
 			"  PrintString, Add, Subtract, Multiply, Divide — no required params\n\n"
 			"PIN NAMES (use blueprint_query 'get_node_pins' to verify for any node):\n"
 			"  Exec input='execute'  Exec output='then'\n"
-			"  Branch: input='Condition', outputs='True'/'False'\n"
+			"  Branch: input='Condition', outputs='then' (true path) / 'else' (false path)\n"
 			"  Sequence: outputs='then_0','then_1','then_2',...\n"
 			"  VariableSet: data input matches variable name (e.g. 'MyVar')\n"
 			"  Omit source_pin/target_pin to auto-connect first available exec pins.\n\n"
@@ -75,7 +88,7 @@ public:
 		Info.Parameters = {
 			// Operation selector
 			FMCPToolParameter(TEXT("operation"), TEXT("string"),
-				TEXT("create | add_variable | remove_variable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | connect_pins | disconnect_pins | set_pin_value"), true),
+				TEXT("create | add_variable | remove_variable | set_variable_instance_editable | add_function | add_function_input | remove_function | add_node | add_nodes | delete_node | move_node | connect_pins | disconnect_pins | set_pin_value"), true),
 
 			// Common parameters
 			FMCPToolParameter(TEXT("blueprint_path"), TEXT("string"),
@@ -96,6 +109,8 @@ public:
 				TEXT("Variable name. Required for add_variable / remove_variable."), false),
 			FMCPToolParameter(TEXT("variable_type"), TEXT("string"),
 				TEXT("Supported types: bool | int | float | byte | string | Vector | Rotator | Transform. Object reference types (Actor, Component, etc.) are NOT supported — add those manually in the editor."), false),
+			FMCPToolParameter(TEXT("instance_editable"), TEXT("boolean"),
+				TEXT("For set_variable_instance_editable: true to enable Instance Editable (required before set_property works on level instances), false to disable."), false, TEXT("true")),
 
 			// For function operations
 			FMCPToolParameter(TEXT("function_name"), TEXT("string"),
@@ -156,6 +171,7 @@ private:
 	FMCPToolResult ExecuteCreate(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddVariable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveVariable(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetVariableInstanceEditable(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddFunction(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddFunctionInput(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteRemoveFunction(const TSharedRef<FJsonObject>& Params);
@@ -164,11 +180,25 @@ private:
 	FMCPToolResult ExecuteAddNode(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteAddNodes(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteDeleteNode(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteMoveNode(const TSharedRef<FJsonObject>& Params);
 
 	// Level 4 Operations (Connections)
 	FMCPToolResult ExecuteConnectPins(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteDisconnectPins(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteSetPinValue(const TSharedRef<FJsonObject>& Params);
+
+	// Group A — Variable additions
+	FMCPToolResult ExecuteSetVariableDefault(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetVariableExposeOnSpawn(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRenameVariable(const TSharedRef<FJsonObject>& Params);
+
+	// Group B — Component management
+	FMCPToolResult ExecuteAddComponent(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteRemoveComponent(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteSetComponentProperty(const TSharedRef<FJsonObject>& Params);
+
+	// Group C — Blueprint class management
+	FMCPToolResult ExecuteAddInterface(const TSharedRef<FJsonObject>& Params);
 
 	// Helpers
 	EBlueprintType ParseBlueprintType(const FString& TypeString);
@@ -182,9 +212,11 @@ private:
 		FString& OutError
 	);
 
+	// LocalIdToGuid maps local "id" strings from the add_nodes call to real node_ids (TODO-22)
 	TArray<TSharedPtr<FJsonValue>> ProcessNodeConnections(
 		UEdGraph* Graph,
 		const TArray<TSharedPtr<FJsonValue>>& ConnectionsArray,
-		const TArray<FString>& CreatedNodeIds
+		const TArray<FString>& CreatedNodeIds,
+		const TMap<FString, FString>& LocalIdToGuid
 	);
 };

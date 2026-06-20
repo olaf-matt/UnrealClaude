@@ -7,6 +7,8 @@
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_EditablePinBase.h"
 #include "EdGraph/EdGraph.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
 
 // ===== Variable Management =====
 
@@ -84,6 +86,46 @@ bool FBlueprintEditor::RemoveVariable(
 
 	UE_LOG(LogUnrealClaude, Log, TEXT("Removed variable '%s' from Blueprint '%s'"),
 		*VariableName, *Blueprint->GetName());
+	return true;
+}
+
+bool FBlueprintEditor::SetVariableInstanceEditable(
+	UBlueprint* Blueprint,
+	const FString& VariableName,
+	bool bInstanceEditable,
+	FString& OutError)
+{
+	if (!Blueprint)
+	{
+		OutError = TEXT("Blueprint is null");
+		return false;
+	}
+
+	FName VarName(*VariableName);
+
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		OutError = FString::Printf(TEXT("Variable '%s' not found"), *VariableName);
+		return false;
+	}
+
+	// SetBlueprintOnlyEditableFlag(false) removes CPF_DisableEditOnInstance → Instance Editable ON
+	// SetBlueprintOnlyEditableFlag(true)  adds    CPF_DisableEditOnInstance → Instance Editable OFF
+	FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag(Blueprint, VarName, !bInstanceEditable);
+
+	UE_LOG(LogUnrealClaude, Log,
+		TEXT("Set variable '%s' instance_editable=%s on Blueprint '%s'"),
+		*VariableName, bInstanceEditable ? TEXT("true") : TEXT("false"), *Blueprint->GetName());
 	return true;
 }
 
@@ -274,11 +316,10 @@ bool FBlueprintEditor::AddFunctionInput(
 		}
 	}
 
-	// Interface function entry nodes must be editable for the signature to accept changes
-	if (Blueprint->BlueprintType == BPTYPE_Interface)
-	{
-		EntryNode->bIsEditable = true;
-	}
+	// The entry node must be editable so the function signature accepts new pins.
+	// This is required for both Interface and regular Blueprint functions —
+	// without it, ReconstructNode ignores UserDefinedPins on non-interface BPs.
+	EntryNode->bIsEditable = true;
 
 	TSharedPtr<FUserPinInfo> PinInfo = MakeShared<FUserPinInfo>();
 	PinInfo->PinName = FName(*InputName);
@@ -287,8 +328,414 @@ bool FBlueprintEditor::AddFunctionInput(
 	EntryNode->UserDefinedPins.Add(PinInfo);
 	EntryNode->ReconstructNode();
 
+	// Structural modification needed so the compiler picks up the new function signature
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
 	UE_LOG(LogUnrealClaude, Log, TEXT("Added input '%s' to function '%s' on Blueprint '%s'"),
 		*InputName, *FunctionName, *Blueprint->GetName());
+	return true;
+}
+
+// ===== Variable Management Additions =====
+
+bool FBlueprintEditor::SetVariableDefault(
+	UBlueprint* Blueprint,
+	const FString& VariableName,
+	const FString& DefaultValue,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	FName VarName(*VariableName);
+	for (FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			Var.DefaultValue = DefaultValue;
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			UE_LOG(LogUnrealClaude, Log, TEXT("Set default for '%s' = '%s' on Blueprint '%s'"),
+				*VariableName, *DefaultValue, *Blueprint->GetName());
+			return true;
+		}
+	}
+
+	OutError = FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *Blueprint->GetName());
+	return false;
+}
+
+bool FBlueprintEditor::SetVariableExposeOnSpawn(
+	UBlueprint* Blueprint,
+	const FString& VariableName,
+	bool bExposeOnSpawn,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	FName VarName(*VariableName);
+	for (FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == VarName)
+		{
+			if (bExposeOnSpawn)
+				Var.PropertyFlags |= CPF_ExposeOnSpawn;
+			else
+				Var.PropertyFlags &= ~CPF_ExposeOnSpawn;
+
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			UE_LOG(LogUnrealClaude, Log, TEXT("Set expose_on_spawn=%s for '%s' on Blueprint '%s'"),
+				bExposeOnSpawn ? TEXT("true") : TEXT("false"), *VariableName, *Blueprint->GetName());
+			return true;
+		}
+	}
+
+	OutError = FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *Blueprint->GetName());
+	return false;
+}
+
+bool FBlueprintEditor::RenameVariable(
+	UBlueprint* Blueprint,
+	const FString& OldName,
+	const FString& NewName,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	if (!ValidateVariableName(NewName, OutError)) return false;
+
+	FName OldVarName(*OldName);
+	FName NewVarName(*NewName);
+
+	// Verify old name exists
+	bool bFound = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == OldVarName) { bFound = true; break; }
+	}
+	if (!bFound)
+	{
+		OutError = FString::Printf(TEXT("Variable '%s' not found"), *OldName);
+		return false;
+	}
+
+	// Verify new name is not taken
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName == NewVarName)
+		{
+			OutError = FString::Printf(TEXT("Variable '%s' already exists"), *NewName);
+			return false;
+		}
+	}
+
+	// RenameMemberVariable updates the descriptor AND all graph references
+	FBlueprintEditorUtils::RenameMemberVariable(Blueprint, OldVarName, NewVarName);
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Renamed variable '%s' → '%s' on Blueprint '%s'"),
+		*OldName, *NewName, *Blueprint->GetName());
+	return true;
+}
+
+// ===== Component Management =====
+
+bool FBlueprintEditor::AddComponent(
+	UBlueprint* Blueprint,
+	const FString& ComponentClassName,
+	const FString& ComponentName,
+	const FString& AssetPath,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	// Resolve component class — try bare name, then with "Component" suffix
+	UClass* ComponentClass = FBlueprintGraphEditor::ResolveClassByName(ComponentClassName);
+	if (!ComponentClass)
+		ComponentClass = FBlueprintGraphEditor::ResolveClassByName(ComponentClassName + TEXT("Component"));
+	if (!ComponentClass || !ComponentClass->IsChildOf(UActorComponent::StaticClass()))
+	{
+		OutError = FString::Printf(
+			TEXT("Component class '%s' not found or is not an ActorComponent subclass. "
+			     "Use the C++ class name without U prefix, e.g. 'NiagaraComponent', 'StaticMeshComponent'."),
+			*ComponentClassName);
+		return false;
+	}
+
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
+	{
+		OutError = TEXT("Blueprint has no SimpleConstructionScript — parent class must be Actor-derived");
+		return false;
+	}
+
+	// Check for duplicate component name
+	FName CompName(*ComponentName);
+	for (USCS_Node* Node : SCS->GetAllNodes())
+	{
+		if (Node && Node->GetVariableName() == CompName)
+		{
+			OutError = FString::Printf(TEXT("Component '%s' already exists in Blueprint '%s'"),
+				*ComponentName, *Blueprint->GetName());
+			return false;
+		}
+	}
+
+	// Create the SCS node
+	USCS_Node* NewNode = SCS->CreateNode(ComponentClass, CompName);
+	if (!NewNode)
+	{
+		OutError = TEXT("SCS->CreateNode returned null");
+		return false;
+	}
+
+	// Optionally assign an asset to the component template
+	if (!AssetPath.IsEmpty() && NewNode->ComponentTemplate)
+	{
+		// Build full path: "/Game/path/Asset" → "/Game/path/Asset.Asset"
+		FString FullPath = AssetPath;
+		if (!FullPath.Contains(TEXT(".")))
+			FullPath = FullPath + TEXT(".") + FPaths::GetBaseFilename(AssetPath);
+
+		UObject* Asset = LoadObject<UObject>(nullptr, *FullPath);
+		if (Asset)
+		{
+			UActorComponent* Template = NewNode->ComponentTemplate;
+			UClass* TemplateClass = Template->GetClass();
+
+			// Try common asset-holding property names in order of likelihood
+			static const TArray<FName> AssetPropNames = {
+				TEXT("Asset"),             // NiagaraComponent → UNiagaraSystem
+				TEXT("StaticMesh"),        // StaticMeshComponent
+				TEXT("SkeletalMeshAsset"), // SkeletalMeshComponent (UE5)
+				TEXT("SkeletalMesh"),      // SkeletalMeshComponent (UE4 compat)
+				TEXT("Sound"),             // AudioComponent
+				TEXT("ParticleSystem"),    // ParticleSystemComponent
+			};
+
+			bool bAssetSet = false;
+			for (FName PropName : AssetPropNames)
+			{
+				if (FObjectProperty* ObjProp = CastField<FObjectProperty>(TemplateClass->FindPropertyByName(PropName)))
+				{
+					if (Asset->IsA(ObjProp->PropertyClass))
+					{
+						ObjProp->SetObjectPropertyValue_InContainer(Template, Asset);
+						bAssetSet = true;
+						UE_LOG(LogUnrealClaude, Log, TEXT("AddComponent: set %s.%s = '%s'"),
+							*ComponentName, *PropName.ToString(), *AssetPath);
+						break;
+					}
+				}
+			}
+
+			if (!bAssetSet)
+			{
+				UE_LOG(LogUnrealClaude, Warning,
+					TEXT("AddComponent: asset '%s' loaded but no matching property found on %s — component added without asset"),
+					*AssetPath, *TemplateClass->GetName());
+			}
+		}
+		else
+		{
+			UE_LOG(LogUnrealClaude, Warning,
+				TEXT("AddComponent: asset '%s' not found — component '%s' added without asset"),
+				*AssetPath, *ComponentName);
+		}
+	}
+
+	// Attach to scene hierarchy: SceneComponents go under DefaultSceneRoot;
+	// non-scene ActorComponents are added directly to the SCS.
+	if (ComponentClass->IsChildOf(USceneComponent::StaticClass()))
+	{
+		USCS_Node* Root = SCS->GetDefaultSceneRootNode();
+		if (Root)
+			Root->AddChildNode(NewNode);
+		else
+			SCS->AddNode(NewNode);
+	}
+	else
+	{
+		SCS->AddNode(NewNode);
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Added component '%s' (%s) to Blueprint '%s'"),
+		*ComponentName, *ComponentClassName, *Blueprint->GetName());
+	return true;
+}
+
+bool FBlueprintEditor::RemoveComponent(
+	UBlueprint* Blueprint,
+	const FString& ComponentName,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
+	{
+		OutError = TEXT("Blueprint has no SimpleConstructionScript");
+		return false;
+	}
+
+	FName CompName(*ComponentName);
+	USCS_Node* NodeToRemove = nullptr;
+	for (USCS_Node* Node : SCS->GetAllNodes())
+	{
+		if (Node && Node->GetVariableName() == CompName)
+		{
+			NodeToRemove = Node;
+			break;
+		}
+	}
+
+	if (!NodeToRemove)
+	{
+		OutError = FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"),
+			*ComponentName, *Blueprint->GetName());
+		return false;
+	}
+
+	SCS->RemoveNode(NodeToRemove);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Removed component '%s' from Blueprint '%s'"),
+		*ComponentName, *Blueprint->GetName());
+	return true;
+}
+
+bool FBlueprintEditor::SetComponentProperty(
+	UBlueprint* Blueprint,
+	const FString& ComponentName,
+	const FString& PropertyName,
+	const FString& Value,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
+	{
+		OutError = TEXT("Blueprint has no SimpleConstructionScript");
+		return false;
+	}
+
+	FName CompName(*ComponentName);
+	USCS_Node* TargetNode = nullptr;
+	for (USCS_Node* Node : SCS->GetAllNodes())
+	{
+		if (Node && Node->GetVariableName() == CompName)
+		{
+			TargetNode = Node;
+			break;
+		}
+	}
+
+	if (!TargetNode || !TargetNode->ComponentTemplate)
+	{
+		OutError = FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"),
+			*ComponentName, *Blueprint->GetName());
+		return false;
+	}
+
+	UActorComponent* Template = TargetNode->ComponentTemplate;
+	UClass* TemplateClass = Template->GetClass();
+
+	FProperty* Prop = TemplateClass->FindPropertyByName(FName(*PropertyName));
+	if (!Prop)
+	{
+		// Collect first 20 property names for a useful error message
+		TArray<FString> PropNames;
+		for (TFieldIterator<FProperty> It(TemplateClass); It && PropNames.Num() < 20; ++It)
+			PropNames.Add(It->GetName());
+		OutError = FString::Printf(
+			TEXT("Property '%s' not found on component '%s' (%s). Sample properties: %s"),
+			*PropertyName, *ComponentName, *TemplateClass->GetName(),
+			*FString::Join(PropNames, TEXT(", ")));
+		return false;
+	}
+
+	// Object reference properties: load the asset and assign
+	if (FObjectProperty* ObjProp = CastField<FObjectProperty>(Prop))
+	{
+		FString FullPath = Value;
+		if (!FullPath.Contains(TEXT(".")))
+			FullPath = FullPath + TEXT(".") + FPaths::GetBaseFilename(Value);
+
+		UObject* Asset = LoadObject<UObject>(nullptr, *FullPath);
+		if (!Asset)
+		{
+			OutError = FString::Printf(TEXT("Could not load asset '%s' for property '%s'"), *Value, *PropertyName);
+			return false;
+		}
+		if (!Asset->IsA(ObjProp->PropertyClass))
+		{
+			OutError = FString::Printf(TEXT("Asset '%s' is not a %s (required by property '%s')"),
+				*Value, *ObjProp->PropertyClass->GetName(), *PropertyName);
+			return false;
+		}
+		ObjProp->SetObjectPropertyValue_InContainer(Template, Asset);
+	}
+	else
+	{
+		// Primitive / struct properties: import from string
+		if (!Prop->ImportText_InContainer(*Value, Template, Template, PPF_None))
+		{
+			OutError = FString::Printf(TEXT("Failed to set property '%s' = '%s' on component '%s'"),
+				*PropertyName, *Value, *ComponentName);
+			return false;
+		}
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Set component property '%s.%s' = '%s' on Blueprint '%s'"),
+		*ComponentName, *PropertyName, *Value, *Blueprint->GetName());
+	return true;
+}
+
+// ===== Blueprint Class Management =====
+
+bool FBlueprintEditor::AddInterface(
+	UBlueprint* Blueprint,
+	const FString& InterfaceName,
+	FString& OutError)
+{
+	if (!Blueprint) { OutError = TEXT("Blueprint is null"); return false; }
+
+	// Try to resolve the interface class — Blueprint interfaces have a generated _C class
+	UClass* InterfaceClass = FBlueprintGraphEditor::ResolveClassByName(InterfaceName + TEXT("_C"));
+	if (!InterfaceClass)
+		InterfaceClass = FBlueprintGraphEditor::ResolveClassByName(InterfaceName);
+
+	if (!InterfaceClass)
+	{
+		OutError = FString::Printf(TEXT("Interface class '%s' not found. "
+			"Make sure it is a Blueprint Interface asset and the name is correct."), *InterfaceName);
+		return false;
+	}
+
+	if (!InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+	{
+		OutError = FString::Printf(TEXT("'%s' is not an interface class"), *InterfaceName);
+		return false;
+	}
+
+	// Prevent duplicates
+	for (const FBPInterfaceDescription& Desc : Blueprint->ImplementedInterfaces)
+	{
+		if (Desc.Interface == InterfaceClass)
+		{
+			OutError = FString::Printf(TEXT("Blueprint '%s' already implements '%s'"),
+				*Blueprint->GetName(), *InterfaceName);
+			return false;
+		}
+	}
+
+	// ImplementNewInterface creates stub function graphs for all interface functions
+	FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceClass->GetFName());
+
+	UE_LOG(LogUnrealClaude, Log, TEXT("Added interface '%s' to Blueprint '%s'"),
+		*InterfaceName, *Blueprint->GetName());
 	return true;
 }
 
@@ -461,7 +908,7 @@ bool FBlueprintEditor::ParsePinType(
 		}
 	}
 
-	OutError = FString::Printf(TEXT("Unknown type: '%s'. Supported: bool, int, float, double, byte, FString, FName, FText, Vector, Rotator, Transform, LinearColor, TArray<T>, TSet<T>, or any C++ class name (with or without * suffix)."), *TypeString);
+	OutError = FString::Printf(TEXT("Unknown type: '%s'. Supported: bool, int, float, double, byte, FString, FName, FText, Vector, Rotator, Transform, LinearColor, TArray<T>, TSet<T>, T[] (shorthand array), or any C++ class name (with or without * suffix)."), *TypeString);
 	return false;
 }
 
@@ -495,6 +942,21 @@ bool FBlueprintEditor::ParseContainerType(
 		}
 		OutPinType = InnerPinType;
 		OutPinType.ContainerType = EPinContainerType::Set;
+		return true;
+	}
+
+	// TODO-44: Shorthand array syntax: "T[]"  (e.g. "Vector[]", "float[]", "int[]", "Actor[]")
+	// Expand to TArray<T> and recurse.
+	if (TypeString.EndsWith(TEXT("[]")))
+	{
+		FString InnerType = TypeString.LeftChop(2);
+		FEdGraphPinType InnerPinType;
+		if (!ParsePinType(InnerType, InnerPinType, OutError))
+		{
+			return true; // Error already set
+		}
+		OutPinType = InnerPinType;
+		OutPinType.ContainerType = EPinContainerType::Array;
 		return true;
 	}
 

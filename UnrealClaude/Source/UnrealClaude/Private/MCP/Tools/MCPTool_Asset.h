@@ -23,6 +23,9 @@
  * - save_asset: Save an asset to disk (mark dirty and/or save)
  * - get_asset_info: Get information about an asset
  * - list_assets: List assets in a directory with optional filtering
+ * - duplicate: Copy an asset to a new path (equivalent to right-click → Duplicate)
+ * - create_enum: Create a UUserDefinedEnum with optional named values
+ * - create_struct: Create a UUserDefinedStruct with optional typed fields
  */
 class FMCPTool_Asset : public FMCPToolBase
 {
@@ -36,6 +39,9 @@ private:
 	FMCPToolResult ExecuteSaveAsset(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteGetAssetInfo(const TSharedRef<FJsonObject>& Params);
 	FMCPToolResult ExecuteListAssets(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteDuplicate(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteCreateEnum(const TSharedRef<FJsonObject>& Params);
+	FMCPToolResult ExecuteCreateStruct(const TSharedRef<FJsonObject>& Params);
 
 	// Property reflection helpers (adapted from SetProperty tool)
 	bool NavigateToProperty(

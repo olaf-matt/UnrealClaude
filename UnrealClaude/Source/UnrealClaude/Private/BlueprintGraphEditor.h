@@ -105,6 +105,17 @@ public:
 	static bool DeleteNode(UEdGraph* Graph, const FString& NodeId, FString& OutError);
 
 	/**
+	 * Reposition a node without touching its connections
+	 * @param Graph - Graph containing node
+	 * @param NodeId - MCP-generated node ID or raw NodeGuid string
+	 * @param PosX - New X position in graph canvas
+	 * @param PosY - New Y position in graph canvas
+	 * @param OutError - Error message if failed
+	 * @return true if successful
+	 */
+	static bool MoveNode(UEdGraph* Graph, const FString& NodeId, int32 PosX, int32 PosY, FString& OutError);
+
+	/**
 	 * Find node by MCP-generated ID
 	 * @param Graph - Graph to search
 	 * @param NodeId - Node ID to find
@@ -249,9 +260,15 @@ private:
 	static UEdGraphNode* CreateBreakStructNode(UEdGraph* Graph, const FString& StructName, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateForEachLoopNode(UEdGraph* Graph, bool bWithBreak, int32 PosX, int32 PosY, FString& OutError);
 	static UEdGraphNode* CreateSelectNode(UEdGraph* Graph, const FString& TypeName, int32 NumOptions, int32 PosX, int32 PosY, FString& OutError);
+	static UEdGraphNode* CreateSelfNode(UEdGraph* Graph, int32 PosX, int32 PosY);
 
 	/** Resolve a short struct name (e.g. "Vector") to a UScriptStruct*. Handles FVector/FRotator/FTransform directly; falls back to object search. */
 	static UScriptStruct* ResolveStructByName(const FString& StructName);
+
+	/** Find a UBlueprintGeneratedClass by short Blueprint asset name (e.g. "BP_WeatherSystem").
+	 *  Searches the Asset Registry across all Blueprint-derived assets.
+	 *  Returns the GeneratedClass if found and compiled, nullptr otherwise. */
+	static UClass* ResolveBlueprintClassByName(const FString& ShortName);
 
 	// ID prefix for node comments
 	static const FString NodeIdPrefix;
